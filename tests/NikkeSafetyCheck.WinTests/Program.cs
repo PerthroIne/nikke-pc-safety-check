@@ -398,6 +398,8 @@ public static class Program
             Find(win, "권장 조치 실행", 180);
             Thread.Sleep(800);
             Screen_("e2e-6-rescan");
+            Find(win, "기록 폴더 열기", 30);
+            True(HistoryStore.LoadActions(DataPaths.ForTarget(t)).Any(x => x.Kind == PlanKind.QuarantineDll && x.Outcome == ItemOutcome.Succeeded), "조치 내역 미기록");
         }
         catch { Screen_("e2e-failure"); throw; }
         finally

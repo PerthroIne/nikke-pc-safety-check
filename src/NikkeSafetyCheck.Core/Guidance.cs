@@ -29,5 +29,17 @@ public static class Guidance
         "에이전트가 실행되었다면 공격자가 임의 명령을 실행할 수 있었습니다. 명령 실행 기록은 로그에 남지 않으므로, 알려진 항목을 제거해도 그동안 일어난 변경을 모두 되돌렸다고 볼 수 없습니다. 고위험 실행 증거가 있다면 가장 확실한 선택은 재설치입니다.",
         ["중요 문서와 사진을 먼저 백업합니다. 지금 PC의 설치 파일이나 실행 파일(.exe 등)은 백업에서 제외하거나 나중에 실행하지 않습니다.", "깨끗한 기기에서 Microsoft 공식 페이지로 설치 매체를 만듭니다.", "Windows를 새로 설치합니다. '내 파일 유지'가 아닌 전체 지우기를 권장합니다.", "브라우저 동기화를 다시 켜기 전에 계정 비밀번호를 먼저 바꿉니다.", "재설치가 어렵다면 PC 수리점이나 보안 전문 지원을 받을 수 있습니다."]);
 
+    public const string ManualCheckIntro = "이 프로그램으로 처리한 항목은 공지나 안내글의 경로에서 직접 찾아도 나오지 않습니다. 안 나오는 것이 정상이며, 안전하다는 뜻은 아닙니다.";
+    public const string DebugLogKept = "니케 설치 폴더의 debug.log는 지우지 않습니다. 과거 실행 기록은 여기서 그대로 확인할 수 있습니다.";
+
+    /// <summary>조치 뒤 수동으로 확인할 때 무엇이 어떻게 보이는지 설명한다.</summary>
+    public static string? ManualCheckNote(PlanKind kind) => kind switch
+    {
+        PlanKind.RemoveComKey => "사용자 COM 등록: 삭제되어 레지스트리에서 찾아도 나오지 않습니다. 삭제 전 값은 기록 폴더의 evidence에 있습니다.",
+        PlanKind.QuarantineDll => "의심 DLL: 격리 폴더로 옮겨 원래 경로에는 없습니다. 파일은 기록 폴더의 quarantine에 있습니다.",
+        PlanKind.ClearLauncherCache => "런처 캐시: tbs_cache 폴더를 지워 k2f.agent를 찾아도 나오지 않습니다. 복사본은 기록 폴더의 evidence에 있습니다.",
+        _ => null,
+    };
+
     public static string StatusNotice => "2026년 11월 4일 기준으로 공식 확정·복구 공지를 확인하지 못했습니다. 페이지 일부는 자동으로 읽을 수 없어 공지가 없다고 단정할 수는 없습니다. 공식 채널을 직접 확인하세요. 한국 서버, 글로벌 서버, 별도 유통판의 영향 여부는 확정되지 않았습니다.";
 }

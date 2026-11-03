@@ -175,7 +175,28 @@ public sealed record ScanSnapshot(DateTimeOffset At, OverallRisk Risk, Completen
 
 public static class HistoryStore
 {
+    private const int MaxActions = 200;
     private static string File_(DataPaths p) => Path.Combine(p.History, "worst.json");
+    private static string ActionsFile(DataPaths p) => Path.Combine(p.History, "actions.json");
+
+    /// <summary>실행한 조치 내역. 프로그램을 다시 켜도 무엇을 언제 처리했는지 보여 주기 위해 남긴다.</summary>
+    public static IReadOnlyList<ItemResult> LoadActions(DataPaths p)
+    {
+        try { return File.Exists(ActionsFile(p)) ? JsonSerializer.Deserialize<List<ItemResult>>(File.ReadAllText(ActionsFile(p)), Json.Options) ?? [] : []; }
+        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { return []; }
+    }
+
+    public static void AppendActions(DataPaths p, IEnumerable<ItemResult> actions)
+    {
+        try
+        {
+            var all = LoadActions(p).Concat(actions).TakeLast(MaxActions).ToList();
+            Directory.CreateDirectory(p.History);
+            File.WriteAllText(ActionsFile(p), JsonSerializer.Serialize(all, Json.Options));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { /* 기록 실패가 조치 결과를 바꾸지 않는다 */ }
+    }
+
 
     public static ScanSnapshot Snapshot(ScanResult s) => new(s.FinishedAt, s.Risk, s.Completeness,
         s.Findings.Where(f => f.Status == CheckStatus.Found && f.Severity == Severity.High).Select(f => f.RuleId).Distinct().ToArray(),

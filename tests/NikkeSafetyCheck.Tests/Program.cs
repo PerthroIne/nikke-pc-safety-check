@@ -641,6 +641,43 @@ T("32 DLL 존재와 로드 상태 구분, 과거 실행 경고 유지, 원인 �
     File.Delete(dll);
     True(Verdict.StagesOf(Scan(e).Findings).Contains(EvidenceStage.AgentExecuted), "과거 실행 경고 해제");
 });
+TA("33 조치 내역은 다시 열어도 남고, 시험 실행과 선택 안 한 항목은 남지 않음", async () =>
+{
+    using var e = NewEnv();
+    var dll = e.PlantDll(Encoding.ASCII.GetBytes("a"), matchName: false);
+    var key = e.PlantCom(dll);
+    e.Install(); e.DebugLog("x\n");
+    var cache = PathSafety.LauncherCacheDir(e.Target); Directory.CreateDirectory(cache);
+    var r = Scan(e);
+    var plan = PlanBuilder.Build(r, null);
+    var ids = plan.Items.Where(i => i.Kind is PlanKind.RemoveComKey or PlanKind.QuarantineDll or PlanKind.ClearLauncherCache).Select(i => i.Id).ToHashSet();
+    await e.Exec().ExecuteAsync(plan, ids, r, true, null, default);
+    Eq(0, HistoryStore.LoadActions(e.Data).Count, "시험 실행 기록");
+    await e.Exec().ExecuteAsync(plan, ids, r, false, null, default);
+    var acts = HistoryStore.LoadActions(e.Data);
+    Eq(3, acts.Count, "조치 기록");
+    True(acts.All(a => a.Outcome == ItemOutcome.Succeeded));
+    True(!acts.Any(a => a.Kind == PlanKind.BlockKnownNetwork), "선택 안 한 항목 기록");
+    foreach (var a in acts) True(Guidance.ManualCheckNote(a.Kind) is not null, "안내 누락");
+    HistoryStore.AppendActions(e.Data, [new ItemResult("x", PlanKind.DefenderQuickScan, "t", ItemOutcome.Succeeded, "m", DateTimeOffset.Now)]);
+    Eq(4, HistoryStore.LoadActions(e.Data).Count);
+    Eq(null, Guidance.ManualCheckNote(PlanKind.DefenderQuickScan));
+    File.WriteAllText(Path.Combine(e.Data.History, "actions.json"), "{broken");
+    Eq(0, HistoryStore.LoadActions(e.Data).Count, "손상된 기록");
+});
+T("34 조치 후 수동 확인 안내: 사라지는 항목을 실행 전에 알리고 debug.log는 유지", () =>
+{
+    using var e = NewEnv();
+    var dll = e.PlantDll(Encoding.ASCII.GetBytes("a"), matchName: false);
+    e.PlantCom(dll);
+    var log = e.DebugLog(ExecLine + "\n");
+    Directory.CreateDirectory(PathSafety.LauncherCacheDir(e.Target));
+    var plan = PlanBuilder.Build(Scan(e), null);
+    foreach (var k in new[] { PlanKind.RemoveComKey, PlanKind.QuarantineDll, PlanKind.ClearLauncherCache })
+        True(plan.Items.Single(i => i.Kind == k).WhatChanges.Contains("실행하면"), k + " 안내 누락");
+    True(Guidance.ManualCheckIntro.Contains("안전하다는 뜻은 아닙니다"), "안전 오해 문구");
+    True(File.Exists(log));
+});
 T("15 IOC 데이터 무결성과 출처", () =>
 {
     True(ioc.BlockDomains.Contains("analytics.insightjs.com"));

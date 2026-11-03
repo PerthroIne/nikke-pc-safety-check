@@ -25,7 +25,6 @@ public sealed class MainWindow : Window
     private ScanSnapshot? _worst;
     private RemediationPlan? _plan;
     private List<ItemResult> _actions = [];
-    private readonly List<ItemResult> _sessionActions = [];
     private CancellationTokenSource? _cts;
 
     public static AppServices DefaultServices(string version)
@@ -233,6 +232,8 @@ public sealed class MainWindow : Window
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
 
+        if (PastActionsCard() is { } past) page.Children.Add(past);
+
         var planBtn = Btn("권장 조치 실행", true, async (_, _) => await GuardUi(OpenPlanAsync));
         page.Children.Add(Row(planBtn, Btn("결과 저장", false, (_, _) => SaveReport()), Btn("계정 보호 안내", false, (_, _) => ShowGuide()), Btn("다시 점검", false, (_, _) => StartScan())));
 
@@ -265,6 +266,20 @@ public sealed class MainWindow : Window
         page.Children.Add(new Expander { Header = new TextBlock { Text = $"일치 항목이 없거나 해당 없는 검사 {rest.Count}개 보기", FontSize = 14 }, Content = restPanel, Margin = new Thickness(0, 6, 0, 10) });
         page.Children.Add(UndoCard());
         Show(page);
+    }
+
+    /// <summary>이전에 실행한 조치를 보여 준다. 공지 경로에서 항목이 안 보이는 이유를 사용자가 스스로 알 수 있게 한다.</summary>
+    private UIElement? PastActionsCard()
+    {
+        var acts = HistoryStore.LoadActions(_data);
+        if (acts.Count == 0) return null;
+        var s = Stack(Text($"이 PC에서 이전에 실행한 조치 {acts.Count}건", 16, true), Text(Guidance.ManualCheckIntro));
+        foreach (var a in acts.Reverse().Take(8))
+            s.Children.Add(Text($"{a.At:yyyy-MM-dd HH:mm} · [{ReportBuilder.OutcomeLabel(a.Outcome)}] {a.Title}", 14, bottom: 3));
+        if (acts.Count > 8) s.Children.Add(Text($"이전 항목 {acts.Count - 8}건은 '결과 저장' 파일에서 볼 수 있습니다.", 13, color: Muted));
+        s.Children.Add(Text(Guidance.DebugLogKept, 14, bottom: 6));
+        s.Children.Add(Row(Btn("기록 폴더 열기", false, (_, _) => OpenDataFolder())));
+        return Card(s, "#EEF1F5", "#A9B4C2");
     }
 
     private UIElement NextStepsCard(ScanResult scan)
@@ -354,6 +369,8 @@ public sealed class MainWindow : Window
             "이 조치는 '알려진 항목'만 다룹니다. 완치를 뜻하지 않습니다.",
             "변경 전 값과 해시를 이 PC의 사용자 전용 폴더에 기록합니다. 외부로 보내지 않습니다.",
             "격리한 파일과 삭제한 악성 항목을 원클릭으로 되살리는 기능은 없습니다. 방화벽과 hosts 차단만 되돌릴 수 있습니다.",
+            "실행한 뒤에는 공지나 안내글의 경로에서 해당 항목을 찾아도 나오지 않습니다. 직접 먼저 확인하고 싶다면 이 화면에서 실행하기 전에 확인하세요.",
+            Guidance.DebugLogKept,
             "관리자 승인 창은 관리자 항목을 고른 경우에만 뜹니다. 취소해도 다른 항목은 진행됩니다.",
         ]))));
         HashSet<string> Selected() => boxes.Where(kv => kv.Value.IsChecked == true).Select(kv => kv.Key).ToHashSet();
@@ -394,7 +411,6 @@ public sealed class MainWindow : Window
             return;
         }
         _actions = res.Where(r => r.Outcome != ItemOutcome.Skipped || !defenderItems.Any(d => d.Id == r.ItemId)).ToList();
-        if (!dryRun) _sessionActions.AddRange(_actions.Where(a => a.Outcome != ItemOutcome.Skipped));
         var defenderRows = dryRun ? [] : defenderItems;
         ShowActionResults(dryRun, defenderRows);
     }
@@ -434,9 +450,15 @@ public sealed class MainWindow : Window
                 title.Text = (r.Ok ? "✔ [완료, 결과 확인 필요] " : "✖ [실패] ") + item.Title;
                 status.Text = r.Message;
                 var ir = new ItemResult(item.Id, item.Kind, item.Title, r.Ok ? ItemOutcome.Succeeded : ItemOutcome.Failed, r.Message, DateTimeOffset.Now);
-                _actions.Add(ir); _sessionActions.Add(ir);
+                _actions.Add(ir);
+                HistoryStore.AppendActions(_data, [ir]);
             });
         }
+
+        var notes = _actions.Where(a => a.Outcome == ItemOutcome.Succeeded).Select(a => Guidance.ManualCheckNote(a.Kind)).OfType<string>().ToList();
+        if (!dryRun && notes.Count > 0)
+            page.Children.Add(Card(Stack(Text("공지 경로에서 직접 확인할 때", 16, true), Text(Guidance.ManualCheckIntro), Bullets(notes), Text(Guidance.DebugLogKept),
+                Text("기록 폴더: " + _data.Root, 13, color: Muted)), "#EEF1F5", "#A9B4C2"));
 
         if (pending > 0)
             page.Children.Add(Card(Stack(Text("재부팅 후 할 일", 16, true), Bullets([
@@ -471,9 +493,9 @@ public sealed class MainWindow : Window
         try
         {
             var b = Path.ChangeExtension(d.FileName, null);
-            File.WriteAllText(b + ".html", ReportBuilder.Html(_scan, _s.Ioc, _sessionActions, _worst));
-            File.WriteAllText(b + ".txt", ReportBuilder.Text(_scan, _s.Ioc, _sessionActions, _worst));
-            File.WriteAllText(b + ".json", ReportBuilder.JsonReport(_scan, _s.Ioc, _sessionActions, _worst));
+            File.WriteAllText(b + ".html", ReportBuilder.Html(_scan, _s.Ioc, HistoryStore.LoadActions(_data), _worst));
+            File.WriteAllText(b + ".txt", ReportBuilder.Text(_scan, _s.Ioc, HistoryStore.LoadActions(_data), _worst));
+            File.WriteAllText(b + ".json", ReportBuilder.JsonReport(_scan, _s.Ioc, HistoryStore.LoadActions(_data), _worst));
             MessageBox.Show(this, "HTML, TXT, JSON 세 파일로 저장했습니다.\n사용자 이름, PC 이름, SID, 경로 일부, 토큰은 가렸습니다. 그래도 공유 전에 한 번 읽어 보세요.", "저장 완료", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)

@@ -47,14 +47,14 @@ public static class PlanBuilder
                     items.Add(new PlanItem
                     {
                         Id = "com-" + items.Count, Kind = PlanKind.RemoveComKey, Title = "사용자 COM 등록 제거", SelectedByDefault = true,
-                        WhatChanges = "이 계정의 레지스트리에서 악성 DLL을 가리키는 항목 하나만 삭제합니다. 삭제 전 값을 기록합니다. HKLM의 Windows 정상 항목은 건드리지 않습니다.",
+                        WhatChanges = "이 계정의 레지스트리에서 악성 DLL을 가리키는 항목 하나만 삭제합니다. 삭제 전 값을 기록합니다. HKLM의 Windows 정상 항목은 건드리지 않습니다. 실행하면 안내글의 레지스트리 확인 명령으로 찾아도 나오지 않습니다.",
                         ExpectedRegistryKey = f.RegistryKey, ExpectedRegistryValue = f.RegistryValue,
                     });
                 else if (f.EvidenceType == EvidenceType.PersistenceDll && f.Path is not null && f.Sha256 is not null)
                     items.Add(new PlanItem
                     {
                         Id = "dll-" + items.Count, Kind = PlanKind.QuarantineDll, Title = "의심 DLL 격리", SelectedByDefault = true,
-                        WhatChanges = "DLL 파일 하나를 실행되지 않는 격리 폴더로 옮깁니다. 상위 PlatformExperienceHelper 폴더와 Chrome 정상 EXE는 남겨 둡니다.",
+                        WhatChanges = "DLL 파일 하나를 실행되지 않는 격리 폴더로 옮깁니다. 상위 PlatformExperienceHelper 폴더와 Chrome 정상 EXE는 남겨 둡니다. 실행하면 안내글의 경로에서 이 파일과 64자리 폴더가 보이지 않습니다.",
                         Warning = "파일이 사용 중이면 재부팅 후 다시 처리해야 합니다.",
                         ExpectedPath = f.Path, ExpectedSha256 = f.Sha256, ExpectedFileId = f.FileId,
                     });
@@ -66,7 +66,7 @@ public static class PlanBuilder
                 items.Add(new PlanItem
                 {
                     Id = "cache", Kind = PlanKind.ClearLauncherCache, Title = "런처 전용 캐시 정리", SelectedByDefault = hasRisk,
-                    WhatChanges = "%APPDATA%\\nikke_launcher\\tbs_cache 폴더만 지웁니다. 먼저 로그와 상태 증거를 복사해 둡니다. 브라우저 프로필은 건드리지 않습니다.",
+                    WhatChanges = "%APPDATA%\\nikke_launcher\\tbs_cache 폴더만 지웁니다. 먼저 로그와 상태 증거를 복사해 둡니다. 브라우저 프로필은 건드리지 않습니다. 실행하면 안내글대로 tbs_cache에서 k2f.agent를 찾아도 나오지 않습니다.",
                     Warning = "감염 치료가 아닙니다. 변조 파일 재사용을 막기 위한 것이며 런처 로그인과 표시 설정이 초기화될 수 있습니다.",
                     ExpectedPath = PathSafety.LauncherCacheDir(t),
                 });
@@ -240,6 +240,7 @@ public sealed class RemediationExecutor(ExecutorDeps deps, TargetUser target, Da
         }
         try { journal?.Write("run-finished", new { Count = results.Count }); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        if (!dryRun) HistoryStore.AppendActions(paths, results.Where(r => r.Outcome != ItemOutcome.Skipped));
         return results;
     }
 
