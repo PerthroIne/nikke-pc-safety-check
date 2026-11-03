@@ -249,7 +249,7 @@ public static class Program
             // 공유 보고서에 실제 사용자 정보가 없는지
             var html = ReportBuilder.Html(after, ioc);
             True(!html.Contains(t.Sid) && !html.Contains(t.ProfileDir, StringComparison.OrdinalIgnoreCase) && !html.Contains(fake, StringComparison.OrdinalIgnoreCase), "보고서 식별자 노출");
-            File.WriteAllText(Path.Combine(_out, "sample-report.html"), html);
+            if (!File.Exists(Path.Combine(_out, "sample-report.html"))) File.WriteAllText(Path.Combine(_out, "sample-report.html"), html);
         }
         finally
         {
