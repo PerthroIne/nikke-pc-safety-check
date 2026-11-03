@@ -8,7 +8,7 @@
 
 **[⬇ NikkeSafetyCheck.exe 받기](https://github.com/PerthroIne/nikke-pc-safety-check/releases/latest/download/NikkeSafetyCheck.exe)** · [해시 파일](https://github.com/PerthroIne/nikke-pc-safety-check/releases/latest/download/SHA256SUMS.txt) · [모든 릴리스](https://github.com/PerthroIne/nikke-pc-safety-check/releases)
 
-설치가 필요 없습니다. Windows 10/11 x64에서 더블클릭으로 실행합니다. 파일이 크고(약 70MB) 처음 뜨는 데 몇 초 걸릴 수 있습니다.
+설치가 필요 없습니다. Windows 10/11 x64에서 더블클릭으로 실행합니다. .NET 런타임이 포함되어 파일이 크고 처음 뜨는 데 몇 초 걸릴 수 있습니다.
 
 ### 받은 파일이 진짜인지 확인하기
 
@@ -19,6 +19,12 @@ Get-FileHash "$HOME\Downloads\NikkeSafetyCheck.exe" -Algorithm SHA256
 ```
 
 **코드 서명이 없습니다.** 그래서 Windows SmartScreen이나 백신이 경고할 수 있습니다. 보안 기능을 끄지 마세요. 해시가 같은지 확인한 뒤 실행 여부를 스스로 판단하거나, 믿기 어려우면 아래 "직접 빌드"를 쓰거나 다른 공개 점검 방법을 쓰세요. 이 저장소는 관리자 PowerShell에 명령을 붙여넣으라고 안내하지 않습니다.
+
+| 시작 화면 | 결과 화면 | 조치 확인 화면 |
+|---|---|---|
+| ![시작 화면](docs/images/welcome.png) | ![고위험 결과 예시](docs/images/result-high.png) | ![조치 확인 예시](docs/images/plan.png) |
+
+화면은 테스트용 가짜 데이터로 만든 예시입니다.
 
 ## 3분 사용법
 
@@ -43,7 +49,7 @@ Get-FileHash "$HOME\Downloads\NikkeSafetyCheck.exe" -Algorithm SHA256
 - **과거 흔적**: 로그, 저장소 기록. 그때 실행되었다는 뜻이고 지금 실행 중이라는 뜻은 아닙니다. 조치 후에도 고위험으로 남는 것이 정상입니다. 일부러 지우지 마세요.
 - **현재 상태**: DLL, 레지스트리 등록, 메모리에 불러온 모듈. 지금 남아 있는 장치입니다.
 
-자세한 설명은 [사용자 안내서](docs/USER_GUIDE.md), 판정 기준과 설계는 [설계 문서](docs/DESIGN.md)를 보세요.
+자세한 설명은 [사용자 안내서](docs/USER_GUIDE.md), 판정 기준과 설계는 [설계 문서](docs/DESIGN.md), 커뮤니티에 소개할 글은 [커뮤니티 가이드](docs/COMMUNITY_GUIDE.md)를 보세요.
 
 ## 점검 항목
 
@@ -79,9 +85,9 @@ Get-FileHash "$HOME\Downloads\NikkeSafetyCheck.exe" -Algorithm SHA256
 
 | 환경 | 상태 |
 |---|---|
-| Windows 11 x64 | 지원 대상. **실제 Windows 11 PC 검증 결과는 [테스트 결과](docs/TEST_RESULTS.md)를 확인하세요** |
+| Windows 11 x64 | 지원 대상. **일반 Windows 11 PC에서는 아직 검증하지 못했습니다** |
 | Windows 10 x64 | 동작 예상, 미검증. Windows 10은 2025년 10월 일반 지원이 끝났습니다 |
-| Windows Server 2025 x64 | GitHub Actions 일회용 VM에서 자동 테스트 |
+| Windows Server 2025 x64 | GitHub Actions 일회용 VM에서 자동 테스트 통과([결과](docs/TEST_RESULTS.md)) |
 | ARM64 Windows, Linux, Steam Deck(Proton) | 지원 제외 |
 
 ## 근거
