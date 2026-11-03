@@ -51,14 +51,14 @@ public sealed partial class Masker(TargetUser t, IEnumerable<string> installDirs
     public string MaskRegistry(string? key) => string.IsNullOrEmpty(key) ? "" : Mask(key);
 }
 
-public sealed record ShareFinding(string RuleId, string Title, string Detail, string SourceUrl, string RuleVersion, DateTimeOffset ObservedAt, string UserSid, EvidenceType EvidenceType, Confidence Confidence, CheckStatus Status, Severity Severity, Temporal Temporal, RemediationEligibility RemediationEligibility, string? Path, string? Sha256, string? RegistryKey);
+public sealed record ShareFinding(string RuleId, string Title, string Detail, string SourceUrl, string RuleVersion, DateTimeOffset ObservedAt, string UserSid, EvidenceStage Stage, EvidenceType EvidenceType, Confidence Confidence, CheckStatus Status, Severity Severity, Temporal Temporal, RemediationEligibility RemediationEligibility, string? Path, string? Sha256, string? RegistryKey);
 
 public static class ReportBuilder
 {
     public static IReadOnlyList<ShareFinding> ToShareable(ScanResult scan, IocData ioc)
     {
         var m = new Masker(scan.Target, scan.Installs.Select(i => i.LauncherDir), ioc);
-        return scan.Findings.Select(f => new ShareFinding(f.RuleId, f.Title, m.Mask(f.Detail), f.SourceUrl, f.RuleVersion, f.ObservedAt, "<SID 가림>", f.EvidenceType, f.Confidence, f.Status, f.Severity, f.Temporal, f.RemediationEligibility, f.Path is null ? null : m.Mask(f.Path), f.Sha256 is null ? null : m.Mask(f.Sha256), f.RegistryKey is null ? null : m.MaskRegistry(f.RegistryKey))).ToList();
+        return scan.Findings.Select(f => new ShareFinding(f.RuleId, f.Title, m.Mask(f.Detail), f.SourceUrl, f.RuleVersion, f.ObservedAt, "<SID 가림>", f.Stage, f.EvidenceType, f.Confidence, f.Status, f.Severity, f.Temporal, f.RemediationEligibility, f.Path is null ? null : m.Mask(f.Path), f.Sha256 is null ? null : m.Mask(f.Sha256), f.RegistryKey is null ? null : m.MaskRegistry(f.RegistryKey))).ToList();
     }
 
     private static string StatusText(CheckStatus s) => s switch
@@ -97,12 +97,16 @@ public static class ReportBuilder
         sb.AppendLine($"도구 {scan.ToolVersion} / 규칙 {scan.RuleVersion} / 점검 {scan.FinishedAt:yyyy-MM-dd HH:mm zzz}");
         sb.AppendLine($"결과: {Verdict.Headline(scan.Risk, scan.Completeness)}");
         sb.AppendLine(Verdict.Explanation(scan.Risk, scan.Completeness));
+        sb.AppendLine($"적용 출처: {ioc.SourceRevision}");
+        var stages = Verdict.StagesOf(scan.Findings);
+        if (stages.Count > 0) sb.AppendLine("확인된 증거 단계: " + string.Join(", ", stages.Select(Verdict.StageLabel)));
+        if (Verdict.CauseNote(scan.Findings) is { } cause) sb.AppendLine(cause);
         if (HistoryLine(scan, worst) is { } hl) sb.AppendLine(hl);
         sb.AppendLine("이 프로그램은 운영사와 무관합니다. 결과는 알려진 지표와 비교한 것으로, 안전을 보장하지 않습니다.");
         sb.AppendLine();
         foreach (var f in ToShareable(scan, ioc))
         {
-            sb.AppendLine($"[{StatusText(f.Status)}] {f.Title} ({f.RuleId})");
+            sb.AppendLine($"[{StatusText(f.Status)}] {f.Title} ({f.RuleId}){(f.Stage == EvidenceStage.None ? "" : " / " + Verdict.StageLabel(f.Stage))}");
             sb.AppendLine($"  {f.Detail}");
             if (f.Path is not null) sb.AppendLine($"  위치: {f.Path}");
             if (f.RegistryKey is not null) sb.AppendLine($"  레지스트리: {f.RegistryKey}");
@@ -126,6 +130,9 @@ public static class ReportBuilder
             finishedAt = scan.FinishedAt, risk = scan.Risk, completeness = scan.Completeness,
             headline = Verdict.Headline(scan.Risk, scan.Completeness),
             history = HistoryLine(scan, worst),
+            sourceRevision = ioc.SourceRevision,
+            evidenceStages = Verdict.StagesOf(scan.Findings),
+            causeNote = Verdict.CauseNote(scan.Findings),
             findings = ToShareable(scan, ioc),
             actions = actions?.Select(a => new { a.Title, a.Kind, a.Outcome, Message = m.Mask(a.Message), a.At }),
         }, Json.Options);
@@ -138,12 +145,15 @@ public static class ReportBuilder
         var sb = new StringBuilder();
         sb.Append("<!doctype html><html lang=\"ko\"><head><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>점검 결과</title>");
         sb.Append("<style>body{font-family:'Malgun Gothic',system-ui,sans-serif;max-width:860px;margin:24px auto;padding:0 16px;color:#1f2733;line-height:1.6}.card{border:1px solid #d5dbe3;border-radius:10px;padding:14px 18px;margin:12px 0}.tag{font-weight:700}small{color:#5b6673}code{word-break:break-all}</style></head><body>");
-        sb.Append($"<h1>NIKKE PC 안전 점검 도우미 (비공식) 결과</h1><p><small>도구 {E(scan.ToolVersion)} · 규칙 {E(scan.RuleVersion)} · {E(scan.FinishedAt.ToString("yyyy-MM-dd HH:mm zzz"))}</small></p>");
+        sb.Append($"<h1>NIKKE PC 안전 점검 도우미 (비공식) 결과</h1><p><small>도구 {E(scan.ToolVersion)} · 규칙 {E(scan.RuleVersion)} · {E(scan.FinishedAt.ToString("yyyy-MM-dd HH:mm zzz"))}<br>적용 출처: {E(ioc.SourceRevision)}</small></p>");
         sb.Append($"<div class=\"card\"><h2>{E(Verdict.Headline(scan.Risk, scan.Completeness))}</h2><p>{E(Verdict.Explanation(scan.Risk, scan.Completeness))}</p><p><small>운영사와 무관한 도구입니다. 알려진 지표와 비교한 결과이며 안전을 보장하지 않습니다.</small></p></div>");
+        var stages = Verdict.StagesOf(scan.Findings);
+        if (stages.Count > 0) sb.Append($"<div class=\"card\"><p>확인된 증거 단계: {E(string.Join(", ", stages.Select(Verdict.StageLabel)))}</p></div>");
+        if (Verdict.CauseNote(scan.Findings) is { } cause) sb.Append($"<div class=\"card\"><p>{E(cause)}</p></div>");
         if (HistoryLine(scan, worst) is { } hl) sb.Append($"<div class=\"card\"><p>{E(hl)}</p></div>");
         foreach (var f in ToShareable(scan, ioc))
         {
-            sb.Append($"<div class=\"card\"><div class=\"tag\">[{E(StatusText(f.Status))}] {E(f.Title)}</div><p>{E(f.Detail)}</p><small>{E(f.RuleId)}");
+            sb.Append($"<div class=\"card\"><div class=\"tag\">[{E(StatusText(f.Status))}] {E(f.Title)}{(f.Stage == EvidenceStage.None ? "" : " / " + E(Verdict.StageLabel(f.Stage)))}</div><p>{E(f.Detail)}</p><small>{E(f.RuleId)}");
             if (f.Path is not null) sb.Append($"<br>위치: <code>{E(f.Path)}</code>");
             if (f.RegistryKey is not null) sb.Append($"<br>레지스트리: <code>{E(f.RegistryKey)}</code>");
             if (f.Sha256 is not null) sb.Append($"<br>SHA-256: <code>{E(f.Sha256)}</code>");

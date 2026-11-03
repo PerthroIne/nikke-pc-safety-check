@@ -40,7 +40,35 @@ public sealed partial class LogScanner(IocData ioc)
         return new UTF8Encoding(false);
     }
 
+    public sealed record TinygetScanResult(int RequestLines, int SuccessLines, bool Truncated);
+
+    /// <summary>요청 기록과 다운로드 성공 기록을 구분한다. 성공은 같은 줄의 OnTaskResult와 result=0으로 판단한다.</summary>
+    public TinygetScanResult ScanTinyget(string path, long maxBytes, CancellationToken ct)
+    {
+        int req = 0, ok = 0;
+        var truncated = ReadLines(path, maxBytes, ct, line =>
+        {
+            if (!line.Contains(ioc.TinygetPayloadMarker, StringComparison.OrdinalIgnoreCase)) return;
+            req++;
+            if (line.Contains("OnTaskResult", StringComparison.Ordinal) && TinygetOk().IsMatch(line)) ok++;
+        });
+        return new TinygetScanResult(req, ok, truncated);
+    }
+
+    [GeneratedRegex(@"\bresult=0\b")] private static partial Regex TinygetOk();
+
     public LogScanResult Scan(string path, long maxBytes, CancellationToken ct)
+    {
+        var state = new Counter();
+        var truncated = ReadLines(path, maxBytes, ct, l => Classify(l, state));
+        return new LogScanResult
+        {
+            ExecutionHits = state.Exec, CorroboratingHits = state.Corro, LoaderHits = state.Loader,
+            LiteralOnlyHits = state.Literal, FirstStamp = state.First, LastStamp = state.Last, Truncated = truncated,
+        };
+    }
+
+    private static bool ReadLines(string path, long maxBytes, CancellationToken ct, Action<string> onLine)
     {
         using var fs = new FileStream(path, new FileStreamOptions
         {
@@ -53,7 +81,6 @@ public sealed partial class LogScanner(IocData ioc)
         fs.Position = bom;
         using var reader = new StreamReader(fs, enc, detectEncodingFromByteOrderMarks: false, 1 << 16, leaveOpen: true);
 
-        var state = new Counter();
         var buf = new char[1 << 16];
         var line = new StringBuilder();
         int n;
@@ -66,7 +93,7 @@ public sealed partial class LogScanner(IocData ioc)
             {
                 if (buf[i] != '\n') continue;
                 line.Append(buf, start, i - start);
-                Classify(line.ToString().TrimEnd('\r'), state);
+                onLine(line.ToString().TrimEnd('\r'));
                 line.Clear();
                 start = i + 1;
             }
@@ -74,17 +101,13 @@ public sealed partial class LogScanner(IocData ioc)
             if (line.Length > MaxLine)
             {
                 // 비정상적으로 긴 줄은 실행 문맥으로 볼 수 없다. 뒤쪽 일부만 남겨 경계에 걸린 문자열을 놓치지 않는다.
-                Classify(line.ToString(), state);
+                onLine(line.ToString());
                 line.Remove(0, line.Length - 512);
             }
             if (fs.Position > maxBytes) { truncated = true; break; }
         }
-        if (line.Length > 0) Classify(line.ToString(), state);
-        return new LogScanResult
-        {
-            ExecutionHits = state.Exec, CorroboratingHits = state.Corro, LoaderHits = state.Loader,
-            LiteralOnlyHits = state.Literal, FirstStamp = state.First, LastStamp = state.Last, Truncated = truncated,
-        };
+        if (line.Length > 0) onLine(line.ToString());
+        return truncated;
     }
 
     private void Classify(string line, Counter c)

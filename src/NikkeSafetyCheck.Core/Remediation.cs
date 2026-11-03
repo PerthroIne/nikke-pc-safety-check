@@ -76,7 +76,7 @@ public static class PlanBuilder
         {
             Id = "net", Kind = PlanKind.BlockKnownNetwork, Title = "알려진 공격 서버 차단", SelectedByDefault = hasRisk, NeedsAdmin = true,
             WhatChanges = "Windows 방화벽에 알려진 IP 차단 규칙을 추가하고 hosts 파일에 알려진 도메인을 앱 소유 구간으로 추가합니다. 나중에 되돌릴 수 있습니다.",
-            Warning = "새 서버, 하위 도메인, DoH, 프록시까지 막는 완전 격리가 아닙니다. 이 차단만으로 대응이 끝나지 않습니다.",
+            Warning = "새 서버, 하위 도메인, DoH, 프록시까지 막는 완전 격리가 아닙니다. 이 차단만으로 대응이 끝나지 않습니다. insightjs.org는 공격 당시의 대체 도메인으로, 조사 시점에는 제3자의 경고 페이지였습니다. 현재 상태와 무관하게 예방으로 막으며, 차단하면 그 경고 페이지도 이 PC에서 열리지 않습니다.",
         });
         foreach (var inst in scan.Installs.Where(i => i.ExecutablePath is not null))
             if (PathSafety.IsValidLauncherExecutable(inst.ExecutablePath!, out _))

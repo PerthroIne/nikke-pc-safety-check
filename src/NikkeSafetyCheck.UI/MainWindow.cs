@@ -205,7 +205,15 @@ public sealed class MainWindow : Window
         page.Children.Add(Card(Stack(
             Text($"{icon}  {Verdict.Headline(scan.Risk, scan.Completeness)}", 20, true, B(fg)),
             Text(Verdict.Explanation(scan.Risk, scan.Completeness), 15),
-            Text($"점검 시각 {scan.FinishedAt:yyyy-MM-dd HH:mm} · 대상 사용자 {scan.Target.UserName} · 규칙 {scan.RuleVersion}", 12, color: Muted, bottom: 0)), bg, border));
+            Text($"점검 시각 {scan.FinishedAt:yyyy-MM-dd HH:mm} · 대상 사용자 {scan.Target.UserName} · 규칙 {scan.RuleVersion}", 12, color: Muted, bottom: 0),
+            Text($"적용 출처: {_s.Ioc.SourceRevision}", 12, color: Muted, bottom: 0)), bg, border));
+        var stages = Verdict.StagesOf(scan.Findings);
+        if (stages.Count > 0)
+            page.Children.Add(Card(Stack(Text("확인된 증거 단계", 15, true),
+                Bullets(stages.Select(Verdict.StageLabel)),
+                Text("단계는 모든 PC에서 순서대로 나타나지 않습니다. 어느 단계든 실제로 어떤 정보가 유출되었는지까지 증명하지는 않습니다.", 13, color: Muted))));
+        if (Verdict.CauseNote(scan.Findings) is { } cause)
+            page.Children.Add(Card(Text(cause), "#EEF1F5", "#A9B4C2"));
 
         if (_worst is not null && _worst.Risk == OverallRisk.High && scan.Risk != OverallRisk.High)
             page.Children.Add(Card(Stack(Text("조치 전 증거는 그대로 남아 있습니다", 15, true, B("#8E1F17")),
@@ -303,7 +311,7 @@ public sealed class MainWindow : Window
             (CheckStatus.NotFound, _) => ("일치 없음", "–", "#1B6E3C", "#FFFFFF", "#D5DBE3"),
             _ => ("해당 없음", "–", "#4F5B6B", "#FFFFFF", "#D5DBE3"),
         };
-        var when = f.Temporal switch { Temporal.Past => " · 과거 흔적", Temporal.Current => " · 현재 상태", _ => "" };
+        var when = f.Stage != EvidenceStage.None ? " · " + Verdict.StageLabel(f.Stage) : f.Temporal switch { Temporal.Past => " · 과거 흔적", Temporal.Current => " · 현재 상태", _ => "" };
         var s = Stack(Text($"{icon} [{label}{when}] {f.Title}", 15, true, B(color), 4), Text(f.Detail));
         if (f.RetryHint is not null) s.Children.Add(Text("해 볼 일: " + f.RetryHint, 14, true));
         if (f.Path is not null) s.Children.Add(Selectable("위치: " + f.Path));
@@ -507,7 +515,8 @@ public sealed class MainWindow : Window
             "⚠ 의심: 다운로드 기록, 캐시 주소처럼 단독으로는 부족한 흔적입니다. 자동으로 지우지 않습니다.",
             "ⓘ 알려진 흔적 미발견: 정해진 범위를 끝까지 봤지만 일치 항목이 없습니다. 안전 보장이 아닙니다.",
             "❔ 점검 불완전: 경로를 못 찾았거나 권한, 잠금, 취소로 충분히 못 봤습니다.",
-            "과거 흔적과 현재 상태는 다릅니다. 로그는 과거의 실행 기록이고, DLL과 레지스트리 등록은 지금 남아 있는 장치입니다.",
+            "과거 흔적과 현재 상태는 다릅니다. 로그는 과거의 실행 기록이고, DLL과 레지스트리 등록은 지금 남아 있는 장치입니다. DLL 파일이 있다고 지금 실행 중인 것은 아니며, 메모리 로드 항목이 따로 알려 줍니다.",
+            "다른 게임을 설치했다는 사실만으로 판정하지 않습니다. 공통 흔적을 찾아도 원인 게임을 알 수 없으면 '원인 미확인'으로 표시합니다.",
         ]))));
         page.Children.Add(Card(Stack(Text("하지 않는 일", 16, true), Bullets([
             "인터넷으로 아무것도 보내지 않습니다. 업데이트 확인도, 공격 서버 접속도 하지 않습니다.",

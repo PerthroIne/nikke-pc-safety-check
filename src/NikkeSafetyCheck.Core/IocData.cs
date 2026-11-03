@@ -12,7 +12,7 @@ public sealed record KnownHash(string Sha256, string Source, string Note);
 /// 선언적 IOC 데이터. 명령, 스크립트, 삭제 경로를 담을 수 없도록 스키마를 고정하고 모르는 필드는 거부한다.
 /// </summary>
 public sealed partial record IocData(
-    int SchemaVersion, string RuleVersion, string ObservedAt, string ReviewAfter,
+    int SchemaVersion, string RuleVersion, string ObservedAt, string ReviewAfter, string SourceRevision,
     Dictionary<string, string> Sources, string ComClsid,
     string[] LogExecutionMarkers, string[] LogCorroboratingMarkers, string[] LogLoaderMarkers,
     string TinygetPayloadMarker, string AgentStateStrong, string AgentStateWeak,

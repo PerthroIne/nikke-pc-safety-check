@@ -115,13 +115,13 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
             {
                 var when = r.FirstStamp is null ? "" : $" 첫 기록 {r.FirstStamp}, 마지막 기록 {r.LastStamp}(로그 시각, 연도 없음).";
                 c.Add(id, title, $"런처 로그에서 에이전트 실행 기록 {r.ExecutionHits}건을 찾았습니다.{when} 과거에 실행되었다는 증거이며, 지금도 실행 중이라는 뜻은 아닙니다. 어떤 정보가 유출되었는지까지 증명하지는 않습니다.",
-                    CheckStatus.Found, EvidenceType.LauncherLogExecution, Confidence.High, Severity.High, Temporal.Past, RemediationEligibility.ManualOnly, path: log, required: true, source: "motherSphere");
+                    CheckStatus.Found, EvidenceType.LauncherLogExecution, Confidence.High, Severity.High, Temporal.Past, RemediationEligibility.ManualOnly, path: log, required: true, source: "motherSphere", stage: EvidenceStage.AgentExecuted);
             }
             else if (r.LiteralOnlyHits > 0 || r.LoaderHits > 0)
             {
                 var what = r.LoaderHits > 0 ? $"로더 관련 기록 {r.LoaderHits}건" : $"지표 문자열 {r.LiteralOnlyHits}건(콘솔 실행 기록 형식은 아님)";
                 c.Add(id, title, $"{what}을 찾았습니다. 악성 코드가 불러와졌을 수 있으나 에이전트 실행까지 확인된 것은 아닙니다. 추가 확인이 필요합니다.",
-                    CheckStatus.Found, EvidenceType.LauncherLogLoader, Confidence.Medium, Severity.Suspicious, Temporal.Past, RemediationEligibility.ManualOnly, path: log, required: true, source: "motherSphere");
+                    CheckStatus.Found, EvidenceType.LauncherLogLoader, Confidence.Medium, Severity.Suspicious, Temporal.Past, RemediationEligibility.ManualOnly, path: log, required: true, source: "motherSphere", stage: EvidenceStage.ExposureOrAttempt);
             }
             else if (r.Truncated)
             {
@@ -147,7 +147,8 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
         {
             var dir = Path.Combine(inst.LauncherDir, "log", "tinyget");
             if (!Directory.Exists(dir)) { c.Add(id, title, "tinyget 로그 폴더가 없어 이 항목은 확인할 수 없습니다.", CheckStatus.Unknown, EvidenceType.Coverage, Confidence.Low, path: dir); continue; }
-            var hits = 0; var unreadable = 0; var luaFiles = 0;
+            int requests = 0, successes = 0, unreadable = 0, luaFiles = 0;
+            var scanner = new LogScanner(ioc);
             foreach (var f in Directory.EnumerateFiles(dir, "*", new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint }))
             {
                 c.Ct.ThrowIfCancellationRequested();
@@ -157,13 +158,17 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
                 try
                 {
                     if (new FileInfo(f).Length > c.Req.Limits.MaxBinaryFileBytes) { unreadable++; continue; }
-                    if (BinaryScanner.Contains(f, ioc.TinygetPayloadMarker, c.Ct)) hits++;
+                    var t = scanner.ScanTinyget(f, c.Req.Limits.MaxBinaryFileBytes, c.Ct);
+                    requests += t.RequestLines; successes += t.SuccessLines;
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { unreadable++; }
             }
-            if (hits > 0 || luaFiles > 0)
-                c.Add(id, title, $"페이로드 다운로드 관련 기록 파일 {hits}개, 에이전트 스크립트 이름의 파일 {luaFiles}개를 찾았습니다. 다운로드 흔적만으로 실행을 확정할 수는 없지만 중요한 경고입니다.",
-                    CheckStatus.Found, EvidenceType.LauncherLogDownload, Confidence.Medium, Severity.Suspicious, Temporal.Past, RemediationEligibility.ManualOnly, path: dir, source: "motherSphere");
+            if (successes > 0 || luaFiles > 0)
+                c.Add(id, title, $"악성 파일 다운로드 성공 기록 {successes}건, 에이전트 스크립트 이름의 파일 {luaFiles}개를 찾았습니다. 내려받은 것이 실행까지 되었는지는 이 기록만으로 알 수 없지만 중요한 경고입니다.",
+                    CheckStatus.Found, EvidenceType.LauncherLogDownload, Confidence.Medium, Severity.Suspicious, Temporal.Past, RemediationEligibility.ManualOnly, path: dir, source: "whykusanagi", stage: EvidenceStage.DownloadSucceeded);
+            else if (requests > 0)
+                c.Add(id, title, $"악성 파일 주소 요청 기록 {requests}건을 찾았지만 다운로드 성공 기록은 없습니다. 시도가 있었다는 뜻이며 다운로드나 실행을 뜻하지 않습니다.",
+                    CheckStatus.Found, EvidenceType.LauncherLogDownload, Confidence.Medium, Severity.Suspicious, Temporal.Past, RemediationEligibility.ManualOnly, path: dir, source: "whykusanagi", stage: EvidenceStage.ExposureOrAttempt);
             else if (unreadable > 0)
                 c.Add(id, title, $"파일 {unreadable}개를 읽지 못했습니다. 읽은 파일에서는 일치 항목이 없었습니다.", CheckStatus.Unknown, EvidenceType.Coverage, Confidence.Low, path: dir, required: true, retry: "런처를 닫고 다시 점검하세요.");
             else
@@ -197,10 +202,10 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
         }
         if (strong > 0)
             c.Add(id, title, "런처 저장소에서 에이전트 상태 값의 이름(k2f.agent.state)을 찾았습니다. 이 사용자 계정에서 에이전트가 실행되었다는 증거입니다. 게임 폴더를 지워도 남는 항목입니다. 값의 내용은 읽거나 기록하지 않았습니다.",
-                CheckStatus.Found, EvidenceType.AgentState, Confidence.High, Severity.High, Temporal.Past, RemediationEligibility.ManualOnly, path: dir, source: "motherSphere");
+                CheckStatus.Found, EvidenceType.AgentState, Confidence.High, Severity.High, Temporal.Past, RemediationEligibility.ManualOnly, path: dir, source: "motherSphere", stage: EvidenceStage.AgentExecuted);
         else if (weak > 0)
             c.Add(id, title, "런처 저장소에서 관련 문자열(k2f.agent)을 찾았습니다. 단독으로는 판단하기 어려워 추가 확인이 필요합니다.",
-                CheckStatus.Found, EvidenceType.AgentState, Confidence.Medium, Severity.Suspicious, Temporal.Past, RemediationEligibility.ManualOnly, path: dir, source: "motherSphere");
+                CheckStatus.Found, EvidenceType.AgentState, Confidence.Medium, Severity.Suspicious, Temporal.Past, RemediationEligibility.ManualOnly, path: dir, source: "motherSphere", stage: EvidenceStage.ExposureOrAttempt);
         else if (unreadable > 0)
             c.Add(id, title, $"파일 {unreadable}개를 읽지 못했습니다. 런처가 켜져 있으면 잠겨 있을 수 있습니다.", CheckStatus.Unknown, EvidenceType.Coverage, Confidence.Low, path: dir, required: true, retry: "런처를 닫고 다시 점검하세요.");
         else
@@ -234,7 +239,7 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
         }
         if (hits > 0)
             c.Add(id, title, $"캐시 파일 {hits}개에서 악성 로더 주소를 찾았습니다. 런처가 변조 파일을 불러왔다는 흔적이며 에이전트 실행을 뜻하지는 않습니다. 런처를 다시 열기 전에 캐시 정리가 필요합니다.",
-                CheckStatus.Found, EvidenceType.LoaderCache, Confidence.Medium, Severity.Suspicious, Temporal.Past, RemediationEligibility.ManualOnly, path: root, source: "motherSphere");
+                CheckStatus.Found, EvidenceType.LoaderCache, Confidence.Medium, Severity.Suspicious, Temporal.Past, RemediationEligibility.ManualOnly, path: root, source: "motherSphere", stage: EvidenceStage.ExposureOrAttempt);
         else if (skipped > 0)
             c.Add(id, title, $"파일 {skipped}개를 제한이나 잠금 때문에 확인하지 못했습니다.", CheckStatus.Unknown, EvidenceType.Coverage, Confidence.Low, path: root, required: true, retry: "런처를 닫고 다시 점검하세요.");
         else
@@ -335,14 +340,14 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
             if (sys32)
                 c.Add("NSC-COM-KNOWN", "사용자 COM 등록", "사용자 COM 항목이 Windows 정상 위치를 가리킵니다. 이 값은 지표와 일치하지 않습니다.", CheckStatus.NotFound, EvidenceType.PersistenceCom, Confidence.Medium, regKey: com.KeyPath, regValue: com.Value, required: true, source: "motherSphere");
             else if (linkedDll is not null && !linkedDll.Reparse)
-                c.Add("NSC-COM-KNOWN", "사용자 COM 등록", "사용자 COM 항목이 브라우저 폴더 안의 의심 DLL을 가리킵니다. 지속 실행 장치가 현재 남아 있다는 결합 증거입니다.",
-                    CheckStatus.Found, EvidenceType.PersistenceCom, Confidence.High, Severity.High, Temporal.Current, RemediationEligibility.Eligible, regKey: com.KeyPath, regValue: com.Value, required: true, source: "motherSphere");
+                c.Add("NSC-COM-KNOWN", "사용자 COM 등록", "사용자 COM 항목이 브라우저 폴더 안의 의심 DLL을 가리킵니다. 지속 실행 장치가 설치되어 남아 있다는 결합 증거입니다. 지금 실행 중인지는 '실행 중 프로그램의 로드 모듈' 항목을 보세요.",
+                    CheckStatus.Found, EvidenceType.PersistenceCom, Confidence.High, Severity.High, Temporal.Current, RemediationEligibility.Eligible, regKey: com.KeyPath, regValue: com.Value, required: true, source: "motherSphere", stage: EvidenceStage.PersistenceInstalled);
             else if (fileExists)
                 c.Add("NSC-COM-KNOWN", "사용자 COM 등록", "사용자 COM 항목이 악성 DLL과 같은 구조의 경로를 가리키고 파일도 있지만, 파일이 잠겨 있거나 링크여서 끝까지 확인하지 못했습니다. 지속 실행 장치가 남아 있을 수 있어 자동으로 처리하지 않습니다. PC를 다시 시작한 뒤 다시 점검하세요.",
-                    CheckStatus.Found, EvidenceType.PersistenceCom, Confidence.High, Severity.High, Temporal.Current, RemediationEligibility.ManualOnly, regKey: com.KeyPath, regValue: com.Value, required: true, source: "motherSphere");
+                    CheckStatus.Found, EvidenceType.PersistenceCom, Confidence.High, Severity.High, Temporal.Current, RemediationEligibility.ManualOnly, regKey: com.KeyPath, regValue: com.Value, required: true, source: "motherSphere", stage: EvidenceStage.PersistenceInstalled);
             else if (layout)
                 c.Add("NSC-COM-KNOWN", "사용자 COM 등록", "사용자 COM 항목이 악성 DLL과 같은 구조의 경로를 가리키지만 DLL 파일은 없습니다. 백신이 DLL만 지운 경우 등에 나타나며, 설치된 적이 있다는 증거입니다.",
-                    CheckStatus.Found, EvidenceType.PersistenceCom, Confidence.High, Severity.High, Temporal.Past, RemediationEligibility.Eligible, regKey: com.KeyPath, regValue: com.Value, required: true, source: "motherSphere");
+                    CheckStatus.Found, EvidenceType.PersistenceCom, Confidence.High, Severity.High, Temporal.Past, RemediationEligibility.Eligible, regKey: com.KeyPath, regValue: com.Value, required: true, source: "motherSphere", stage: EvidenceStage.PersistenceInstalled);
             else
                 c.Add("NSC-COM-KNOWN", "사용자 COM 등록", "같은 CLSID의 사용자 항목이 있지만 알려진 악성 경로 구조가 아닙니다. 자동으로 제거하지 않습니다. 추가 확인이 필요합니다.",
                     CheckStatus.Found, EvidenceType.PersistenceCom, Confidence.Low, Severity.Suspicious, Temporal.Current, RemediationEligibility.ManualOnly, regKey: com.KeyPath, regValue: com.Value, required: true, source: "motherSphere");
@@ -363,8 +368,8 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
             var high = known || (eligible && (comLink || (structural && d.Root.IsPrimary)));
             if (high)
             {
-                var why = known ? "알려진 악성 샘플 해시와 일치합니다." : comLink ? "사용자 COM 항목과 연결되어 있습니다(해시는 피해자별로 다를 수 있어 불일치를 정상 근거로 쓰지 않습니다)." : "폴더 이름이 파일 자신의 SHA-256과 같은, 보고된 악성 설치 구조와 일치합니다.";
-                c.Add("NSC-DLL-SCAN", "의심 DLL", $"{browser} 폴더에서 의심 DLL을 찾았습니다. {why} {sigText}.", CheckStatus.Found, EvidenceType.PersistenceDll, Confidence.High, Severity.High, Temporal.Current, eligible ? RemediationEligibility.Eligible : RemediationEligibility.ManualOnly, path: d.Path, sha: d.Sha256, fileId: d.FileId, required: true, source: known && ioc.KnownDllSha256.First(h => h.Sha256 == d.Sha256).Source == "wormW" ? "wormW" : "motherSphere");
+                var why = known ? "공개된 악성 샘플 해시와 일치합니다. 해시는 샘플을 식별할 뿐이며 파일이 실행되었는지는 별개입니다." : comLink ? "사용자 COM 항목과 연결되어 있습니다(해시는 피해자별로 다를 수 있어 불일치를 정상 근거로 쓰지 않습니다)." : "폴더 이름이 파일 자신의 SHA-256과 같은, 보고된 악성 설치 구조와 일치합니다.";
+                c.Add("NSC-DLL-SCAN", "의심 DLL", $"{browser} 폴더에서 의심 DLL을 찾았습니다. 파일이 있다는 것이 지금 실행 중이라는 뜻은 아닙니다. {why} {sigText}.", CheckStatus.Found, EvidenceType.PersistenceDll, Confidence.High, Severity.High, Temporal.Current, eligible ? RemediationEligibility.Eligible : RemediationEligibility.ManualOnly, path: d.Path, sha: d.Sha256, fileId: d.FileId, required: true, source: known && ioc.KnownDllSha256.First(h => h.Sha256 == d.Sha256).Source == "wormW" ? "wormW" : "motherSphere", stage: EvidenceStage.PersistenceInstalled);
             }
             else
             {
@@ -435,7 +440,7 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
         var hits = r.Hits.Where(h => PathSafety.TryMatchDllLayout(c.Req.Target, h.ModulePath, out _)).ToList();
         if (hits.Count > 0)
             c.Add(id, title, $"실행 중인 프로그램 {hits.Count}개가 의심 DLL을 불러와 있습니다. 지금 활성 상태라는 뜻입니다. 조치 후 PC를 다시 시작해야 메모리에서 사라집니다.",
-                CheckStatus.Found, EvidenceType.ProcessModule, Confidence.High, Severity.High, Temporal.Current, RemediationEligibility.ManualOnly, path: hits[0].ModulePath, source: "whykusanagi");
+                CheckStatus.Found, EvidenceType.ProcessModule, Confidence.High, Severity.High, Temporal.Current, RemediationEligibility.ManualOnly, path: hits[0].ModulePath, source: "whykusanagi", stage: EvidenceStage.CurrentlyLoaded);
         else if (r.InaccessibleProcesses > 0)
             c.Add(id, title, $"일치 항목은 없었지만 프로그램 {r.InaccessibleProcesses}개는 권한 문제로 들여다보지 못했습니다.", CheckStatus.Unknown, EvidenceType.Coverage, Confidence.Low);
         else
@@ -487,14 +492,14 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
         public void Add(string id, string title, string detail, CheckStatus status, EvidenceType type, Confidence conf,
             Severity sev = Severity.None, Temporal temporal = Temporal.NotApplicable, RemediationEligibility elig = RemediationEligibility.None,
             string? path = null, string? sha = null, string? regKey = null, string? regValue = null, string? fileId = null,
-            bool required = false, string source = "motherSphere", string? retry = null)
+            bool required = false, string source = "motherSphere", string? retry = null, EvidenceStage stage = EvidenceStage.None)
         {
             Findings.Add(new Finding
             {
                 RuleId = id, Title = title, Detail = detail, SourceUrl = ioc.Source(source), RuleVersion = ioc.RuleVersion,
                 ObservedAt = DateTimeOffset.Now, UserSid = req.Target.Sid, EvidenceType = type, Confidence = conf, Status = status,
                 RemediationEligibility = elig, Severity = sev, Temporal = temporal, Required = required, Path = path, Sha256 = sha,
-                RegistryKey = regKey, RegistryValue = regValue, FileId = fileId, RetryHint = retry,
+                RegistryKey = regKey, RegistryValue = regValue, FileId = fileId, RetryHint = retry, Stage = stage,
             });
         }
 

@@ -13,6 +13,8 @@ public enum EvidenceType
     Coverage, LauncherLogExecution, LauncherLogDownload, LauncherLogLoader, AgentState, LoaderCache,
     PersistenceDll, PersistenceCom, AgentTempFile, ProcessModule, NetworkConnection, DnsCache, ManualSubmission,
 }
+/// <summary>위험도와 별개의 증거 단계. 모든 PC에서 순서대로 나타난다고 가정하지 않는다.</summary>
+public enum EvidenceStage { None, ExposureOrAttempt, DownloadSucceeded, AgentExecuted, PersistenceInstalled, CurrentlyLoaded }
 public enum OverallRisk { NoKnownTraces, Suspicious, High }
 public enum Completeness { Complete, Partial }
 
@@ -32,6 +34,7 @@ public sealed record Finding
     public required RemediationEligibility RemediationEligibility { get; init; }
     public Severity Severity { get; init; }
     public Temporal Temporal { get; init; }
+    public EvidenceStage Stage { get; init; }
     /// <summary>이 검사를 못 하면 '점검 불완전'이 되는 필수 항목인지.</summary>
     public bool Required { get; init; }
     public string? Path { get; init; }
@@ -89,6 +92,30 @@ public sealed record ScanProgress(string Message, int Done, int Total);
 
 public static class Verdict
 {
+    public static string StageLabel(EvidenceStage s) => s switch
+    {
+        EvidenceStage.ExposureOrAttempt => "노출 또는 다운로드 시도",
+        EvidenceStage.DownloadSucceeded => "악성 다운로드 성공(실행 미확정)",
+        EvidenceStage.AgentExecuted => "에이전트 실행 흔적",
+        EvidenceStage.PersistenceInstalled => "DLL 지속성 설치(실행 여부는 별개)",
+        EvidenceStage.CurrentlyLoaded => "현재 메모리에 로드됨",
+        _ => "",
+    };
+
+    public static IReadOnlyList<EvidenceStage> StagesOf(IEnumerable<Finding> fs) =>
+        fs.Where(f => f.Status == CheckStatus.Found && f.Stage != EvidenceStage.None).Select(f => f.Stage).Distinct().Order().ToList();
+
+    /// <summary>PC에 남은 공통 흔적과 그 원인 게임은 다른 문제다. 런처 쪽 증거가 없으면 원인을 단정하지 않는다.</summary>
+    public static string? CauseNote(IEnumerable<Finding> fs)
+    {
+        var found = fs.Where(f => f.Status == CheckStatus.Found).ToList();
+        var persistence = found.Any(f => f.Stage is EvidenceStage.PersistenceInstalled or EvidenceStage.CurrentlyLoaded);
+        var launcher = found.Any(f => f.RuleId is "NSC-LOG-EXEC" or "NSC-LOG-TINYGET" or "NSC-LS-STATE" or "NSC-CACHE-LOADER");
+        return persistence && !launcher
+            ? "감염 원인 미확인: DLL이나 등록 항목은 찾았지만 니케 런처 쪽 기록은 없습니다. 로그가 지워졌을 수도 있고 다른 경로일 수도 있습니다. 어떤 게임이나 프로그램이 원인인지 이 결과만으로는 알 수 없습니다."
+            : null;
+    }
+
     public static OverallRisk RiskOf(IEnumerable<Finding> fs)
     {
         var found = fs.Where(f => f.Status == CheckStatus.Found).ToList();

@@ -578,6 +578,69 @@ T("28 재부팅 대기는 실제 재부팅 전에는 지워지지 않음", () =>
     Journal.MarkReviewedAfterRescan(e.Data, DateTime.UtcNow.AddHours(1));
     Eq(0, Journal.FindPending(e.Data).PendingReboot);
 });
+T("29 악성 URL 요청과 다운로드 성공은 다른 증거 단계", () =>
+{
+    using var e = NewEnv();
+    var l = e.Install(); e.DebugLog("x\n");
+    var tg = Path.Combine(l, "log", "tinyget"); Directory.CreateDirectory(tg);
+    var f = Path.Combine(tg, "tinyget.1.log");
+    File.WriteAllText(f, "AddTask https://analytics.example/comm/assets/insight.bundle\nOnTaskResult insight.bundle result=7\n");
+    Eq(EvidenceStage.ExposureOrAttempt, Of(Scan(e), "NSC-LOG-TINYGET").Single().Stage);
+    File.WriteAllText(f, "AddTask insight.bundle\nOnTaskResult insight.bundle result=0\n");
+    var s = Of(Scan(e), "NSC-LOG-TINYGET").Single();
+    Eq(EvidenceStage.DownloadSucceeded, s.Stage); Eq(Severity.Suspicious, s.Severity);
+    True(s.Detail.Contains("실행까지 되었는지는"), "실행 미확정 안내 없음");
+});
+T("30 LevelDB 내부 문자열: 별도 파일 없이 탐지, 상태 값은 보고서에서 제외", () =>
+{
+    using var e = NewEnv();
+    e.Install(); e.DebugLog("x\n");
+    var ls = Path.Combine(PathSafety.LauncherCacheDir(e.Target), "Local Storage", "leveldb"); Directory.CreateDirectory(ls);
+    File.WriteAllText(Path.Combine(ls, "000005.ldb"), "_https://www.nikkelauncher.com k2f.agent.state {\"password\":\"s3cret-agent-pass\",\"token\":\"tok-abc-123\"}");
+    var r = Scan(e);
+    var f = Of(r, "NSC-LS-STATE").Single();
+    Eq(EvidenceStage.AgentExecuted, f.Stage);
+    foreach (var s in new[] { ReportBuilder.Html(r, ioc), ReportBuilder.Text(r, ioc), ReportBuilder.JsonReport(r, ioc) })
+        True(!s.Contains("s3cret-agent-pass") && !s.Contains("tok-abc-123"), "상태 값 노출");
+    True(!System.Text.Json.JsonSerializer.Serialize(f).Contains("s3cret"), "결과에 상태 값 저장");
+});
+T("31 onominan.tmp와 관련 회사 게임만 있으면 판정·조치 없음", () =>
+{
+    using var e = NewEnv();
+    e.Install(); e.DebugLog("x\n");
+    File.WriteAllText(Path.Combine(e.Target.TempDir, "onominan.tmp"), "x");
+    foreach (var g in new[] { "PUBG MOBILE", "Delta Force", "Honor of Kings", "Arena Breakout Infinite", "Dune Awakening", "Undawn" })
+    {
+        var d = Path.Combine(e.Root, "Program Files", g); Directory.CreateDirectory(d);
+        e.Hints.Hints.Add(new InstallHint(d, "설치 정보"));
+    }
+    var r = Scan(e);
+    Eq(OverallRisk.NoKnownTraces, r.Risk); Eq(1, r.Installs.Count);
+    True(!PlanBuilder.Build(r, null).Items.Any(i => i.Kind is PlanKind.QuarantineDll or PlanKind.RemoveComKey));
+    True(!ioc.AgentTempFilePrefixes.Any(p => p.Contains("onominan")));
+});
+T("32 DLL 존재와 로드 상태 구분, 과거 실행 경고 유지, 원인 미확인 표시", () =>
+{
+    using var e = NewEnv();
+    var dll = e.PlantDll(Encoding.ASCII.GetBytes("a"), matchName: false);
+    e.PlantCom(dll);
+    e.Install(); e.DebugLog("x\n");
+    var r = Scan(e);
+    var d = Of(r, "NSC-DLL-SCAN").Single();
+    Eq(EvidenceStage.PersistenceInstalled, d.Stage);
+    True(d.Detail.Contains("지금 실행 중이라는 뜻은 아닙니다"));
+    True(!Verdict.StagesOf(r.Findings).Contains(EvidenceStage.CurrentlyLoaded), "미로드를 로드로 표시");
+    True(Verdict.CauseNote(r.Findings)!.StartsWith("감염 원인 미확인"));
+    e.Procs.PlantedModule = dll;
+    var r2 = Scan(e);
+    True(Verdict.StagesOf(r2.Findings).Contains(EvidenceStage.CurrentlyLoaded), "로드 미표시");
+    e.DebugLog(ExecLine + "\n");
+    var r3 = Scan(e);
+    Eq(null, Verdict.CauseNote(r3.Findings));
+    e.Procs.PlantedModule = null;
+    File.Delete(dll);
+    True(Verdict.StagesOf(Scan(e).Findings).Contains(EvidenceStage.AgentExecuted), "과거 실행 경고 해제");
+});
 T("15 IOC 데이터 무결성과 출처", () =>
 {
     True(ioc.BlockDomains.Contains("analytics.insightjs.com"));
@@ -688,10 +751,12 @@ sealed class FakeProtector : IFileProtector
 sealed class FakeProcs : IProcessInspector
 {
     public bool Running, LoadedHit, Throw, ForeignModule;
+    public string? PlantedModule;
     public IReadOnlyList<RunningProcess> FindByNames(IEnumerable<string> n) => Running ? [new(1, "nikke_launcher", null)] : [];
     public ModuleInspection FindLoadedModule(string m, CancellationToken ct)
     {
         if (Throw) throw new UnauthorizedAccessException();
+        if (PlantedModule is not null) return new([new(1, "chrome", PlantedModule)], 0);
         if (LoadedHit) return new([new(1, "chrome", "x")], 0);
         if (ForeignModule) return new([new(1, "nikke_launcher", @"C:\Program Files\x\platform_experience_helper.dll")], 0);
         return new([], 0);
