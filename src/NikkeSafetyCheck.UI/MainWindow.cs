@@ -25,6 +25,7 @@ public sealed class MainWindow : Window
     private ScanSnapshot? _worst;
     private RemediationPlan? _plan;
     private List<ItemResult> _actions = [];
+    private readonly List<ItemResult> _sessionActions = [];
     private CancellationTokenSource? _cts;
 
     public static AppServices DefaultServices(string version)
@@ -76,6 +77,7 @@ public sealed class MainWindow : Window
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
 
+        if (RulesStale() is { } stale) page.Children.Add(stale);
         page.Children.Add(Card(Stack(
             Text("이 PC에서 니케 PC 런처 사고의 알려진 흔적을 찾아 드립니다", 18, true),
             Text("2026년 11월, 니케 PC 런처가 불러오는 공식 CDN 파일이 변조되어 원격 제어 에이전트가 설치될 수 있었다는 공개 분석이 나왔습니다. 이 프로그램은 그 분석에 나온 지표를 이 PC에서 확인합니다."),
@@ -93,6 +95,7 @@ public sealed class MainWindow : Window
         page.Children.Add(Card(Stack(Text("점검 설정", 15, true), runtime,
             Text("설치 폴더를 다른 곳에 두었다면 폴더를 이 창에 끌어다 놓거나 아래 버튼으로 선택하세요. 찾지 못해도 결과 화면에서 다시 선택할 수 있습니다.", 13, color: Muted),
             Row(Btn("설치 폴더 직접 선택", false, (_, _) => PickFolder(false))))));
+        page.Children.Add(UndoCard());
 
         page.Children.Add(Card(Stack(Text("지금 꼭 기억하세요", 15, true, B("#8E1F17")), Bullets([
             "공식 복구 공지를 확인하기 전까지 니케 PC 런처를 열지 마세요. 공개 분석에 따르면 런처를 열 때 악성 코드가 내려올 수 있었습니다.",
@@ -100,6 +103,31 @@ public sealed class MainWindow : Window
         ])), "#FDECEA", "#EDB7B1"));
         Show(page);
     }
+
+    private UIElement? RulesStale() =>
+        DateTime.TryParse(_s.Ioc.ReviewAfter, out var due) && DateTime.Now > due
+            ? Card(Stack(Text("⚠ 점검 규칙이 오래되었습니다", 15, true, B("#7A4B00")),
+                Text($"이 프로그램의 규칙은 {_s.Ioc.ObservedAt} 기준입니다. 그 뒤 새로 알려진 흔적은 찾지 못합니다. 저장소에서 새 버전이 있는지 확인하세요.")), "#FFF4DB", "#E5C77F")
+            : null;
+
+    private UIElement UndoCard()
+    {
+        var status = Text("", 14, true);
+        return Card(Stack(Text("이전에 추가한 차단을 해제하려면", 15, true),
+            Text("이 프로그램이 추가한 방화벽 규칙과 hosts 줄만 제거합니다. 격리한 파일과 삭제한 악성 항목은 되살리지 않습니다. 관리자 승인이 필요합니다.", 13, color: Muted),
+            Row(UndoButton(status)), status));
+    }
+
+    private Button UndoButton(TextBlock status) => Btn("예방 설정 되돌리기", false, async (_, _) =>
+    {
+        status.Text = "되돌리는 중입니다.";
+        try
+        {
+            var r = await _s.Privileged.UnblockAllAsync(default);
+            status.Text = (r.Ok ? "✔ " : "✖ ") + r.Message;
+        }
+        catch (Exception ex) { status.Text = $"✖ 되돌리지 못했습니다({ex.GetType().Name})."; }
+    });
 
     private void OnDrop(object sender, DragEventArgs e)
     {
@@ -142,8 +170,19 @@ public sealed class MainWindow : Window
         var req = new ScanRequest { Target = _s.Target, ExtraFolders = _extraFolders.ToList(), ManualLogFiles = _manualLogs.ToList(), DeclaredNeverInstalled = _neverInstalled, IncludeRuntimeChecks = _runtimeChecks };
         var ct = _cts.Token;
         var engine = new ScanEngine(_s.Ioc, _s.Platform, _s.ToolVersion);
-        var result = await Task.Run(() => engine.Run(req, progress, ct));
+        ScanResult result;
+        try { result = await Task.Run(() => engine.Run(req, progress, ct)); }
+        catch (Exception ex)
+        {
+            _cts.Dispose(); _cts = null;
+            Show(Card(Stack(Text("점검을 마치지 못했습니다", 18, true, B("#8E1F17")), Text($"예상하지 못한 오류({ex.GetType().Name})가 났습니다. 이것은 '문제없음'이 아닙니다. 다시 시도해 주세요."), Row(Btn("다시 점검", true, (_, _) => StartScan())))));
+            return;
+        }
         _cts.Dispose(); _cts = null;
+        // 재부팅을 기다리는 기록은 실제 재부팅 뒤에 끝까지 점검했을 때만 정리한다.
+        if (result.Completeness == Completeness.Complete)
+            try { Journal.MarkReviewedAfterRescan(_data, DateTime.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64)); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         ShowResult(result);
     }
 
@@ -160,7 +199,6 @@ public sealed class MainWindow : Window
         _scan = scan; _actions = []; _plan = null;
         HistoryStore.RecordIfWorse(_data, scan);
         _worst = HistoryStore.LoadWorst(_data);
-        try { Journal.MarkPendingResolved(_data); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
 
         var page = new StackPanel();
         var (bg, border, fg, icon) = Palette(scan.Risk, scan.Completeness);
@@ -178,7 +216,16 @@ public sealed class MainWindow : Window
         if (scan.LauncherRunning)
             page.Children.Add(Card(Stack(Text("⚠ 니케 런처가 켜져 있습니다", 15, true, B("#7A4B00")), Text("런처 창을 닫고 다시 점검하세요. 캐시 파일이 잠겨 있으면 일부 항목을 볼 수 없습니다.")), "#FFF4DB", "#E5C77F"));
 
-        var planBtn = Btn("권장 조치 실행", true, async (_, _) => await OpenPlanAsync());
+        if (RulesStale() is { } stale) page.Children.Add(stale);
+        try
+        {
+            if (Journal.FindPending(_data).PendingReboot > 0)
+                page.Children.Add(Card(Stack(Text("↻ 재부팅 후 처리할 항목이 남아 있습니다", 15, true, B("#7A4B00")),
+                    Text("작업을 저장하고 PC를 직접 다시 시작한 뒤, 런처를 열지 말고 다시 점검하세요.")), "#FFF4DB", "#E5C77F"));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+
+        var planBtn = Btn("권장 조치 실행", true, async (_, _) => await GuardUi(OpenPlanAsync));
         page.Children.Add(Row(planBtn, Btn("결과 저장", false, (_, _) => SaveReport()), Btn("계정 보호 안내", false, (_, _) => ShowGuide()), Btn("다시 점검", false, (_, _) => StartScan())));
 
         page.Children.Add(NextStepsCard(scan));
@@ -208,6 +255,7 @@ public sealed class MainWindow : Window
         var restPanel = new StackPanel();
         foreach (var f in rest) restPanel.Children.Add(FindingCard(f));
         page.Children.Add(new Expander { Header = new TextBlock { Text = $"일치 항목이 없거나 해당 없는 검사 {rest.Count}개 보기", FontSize = 14 }, Content = restPanel, Margin = new Thickness(0, 6, 0, 10) });
+        page.Children.Add(UndoCard());
         Show(page);
     }
 
@@ -302,10 +350,21 @@ public sealed class MainWindow : Window
         ]))));
         HashSet<string> Selected() => boxes.Where(kv => kv.Value.IsChecked == true).Select(kv => kv.Key).ToHashSet();
         page.Children.Add(Row(
-            Btn("선택한 조치 실행", true, async (_, _) => await ExecuteAsync(Selected(), false)),
-            Btn("시험 실행 (변경 없음)", false, async (_, _) => await ExecuteAsync(Selected(), true)),
+            Btn("선택한 조치 실행", true, async (_, _) => await GuardUi(() => ExecuteAsync(Selected(), false))),
+            Btn("시험 실행 (변경 없음)", false, async (_, _) => await GuardUi(() => ExecuteAsync(Selected(), true))),
             Btn("돌아가기", false, (_, _) => { if (_scan is not null) ShowResult(_scan); })));
         Show(page);
+    }
+
+    private async Task GuardUi(Func<Task> body)
+    {
+        try { await body(); }
+        catch (Exception ex)
+        {
+            Show(Card(Stack(Text("처리를 마치지 못했습니다", 18, true, B("#8E1F17")),
+                Text($"예상하지 못한 오류({ex.GetType().Name})가 났습니다. 일부 항목이 이미 처리되었을 수 있으니 다시 점검해 현재 상태를 확인하세요."),
+                Row(Btn("다시 점검", true, (_, _) => StartScan())))));
+        }
     }
 
     private async Task ExecuteAsync(HashSet<string> selected, bool dryRun)
@@ -321,12 +380,13 @@ public sealed class MainWindow : Window
         var progress = new Progress<string>(m => msg.Text = m);
         IReadOnlyList<ItemResult> res;
         try { res = await Task.Run(() => exec.ExecuteAsync(plan, direct, scan, dryRun, progress, default)); }
-        catch (Exception e) when (e is InvalidOperationException or IOException or UnauthorizedAccessException)
+        catch (Exception e) when (e is InvalidOperationException or IOException or UnauthorizedAccessException or System.Security.SecurityException)
         {
-            Show(Card(Stack(Text("조치를 시작하지 못했습니다", 18, true, B("#8E1F17")), Text("변경 기록 폴더를 만들 수 없거나 대상 사용자가 달라 시작하지 않았습니다. 다시 점검한 뒤 시도하세요."), Row(Btn("다시 점검", true, (_, _) => StartScan())))));
+            Show(Card(Stack(Text("조치를 시작하지 못했습니다", 18, true, B("#8E1F17")), Text("변경 기록 폴더를 만들 수 없거나 대상 사용자가 달라 시작하지 않았습니다. 아무것도 바꾸지 않았습니다. 다시 점검한 뒤 시도하세요."), Row(Btn("다시 점검", true, (_, _) => StartScan())))));
             return;
         }
         _actions = res.Where(r => r.Outcome != ItemOutcome.Skipped || !defenderItems.Any(d => d.Id == r.ItemId)).ToList();
+        if (!dryRun) _sessionActions.AddRange(_actions.Where(a => a.Outcome != ItemOutcome.Skipped));
         var defenderRows = dryRun ? [] : defenderItems;
         ShowActionResults(dryRun, defenderRows);
     }
@@ -360,10 +420,13 @@ public sealed class MainWindow : Window
             var item = d;
             _ = Dispatcher.InvokeAsync(async () =>
             {
-                var r = await _s.Defender.RunScanAsync(item.Kind == PlanKind.DefenderFullScan, default);
+                NetworkActionResult r;
+                try { r = await _s.Defender.RunScanAsync(item.Kind == PlanKind.DefenderFullScan, default); }
+                catch (Exception ex) { r = new NetworkActionResult(false, $"검사를 진행하지 못했습니다({ex.GetType().Name}). Windows 보안 화면에서 직접 실행하세요."); }
                 title.Text = (r.Ok ? "✔ [완료, 결과 확인 필요] " : "✖ [실패] ") + item.Title;
                 status.Text = r.Message;
-                _actions.Add(new ItemResult(item.Id, item.Kind, item.Title, r.Ok ? ItemOutcome.Succeeded : ItemOutcome.Failed, r.Message, DateTimeOffset.Now));
+                var ir = new ItemResult(item.Id, item.Kind, item.Title, r.Ok ? ItemOutcome.Succeeded : ItemOutcome.Failed, r.Message, DateTimeOffset.Now);
+                _actions.Add(ir); _sessionActions.Add(ir);
             });
         }
 
@@ -372,14 +435,10 @@ public sealed class MainWindow : Window
                 "저장하지 않은 작업을 저장합니다.", "PC를 직접 다시 시작합니다. 이 프로그램은 자동으로 재부팅하지 않습니다.", "니케 런처를 열지 말고 이 프로그램을 다시 실행해 '다시 점검'을 누릅니다.", "같은 파일이 다시 나오면 권장 조치를 한 번 더 실행합니다.",
             ])), "#FFF4DB", "#E5C77F"));
         var undo = Text("", 14, true);
+        var undoBtn = UndoButton(undo);
         page.Children.Add(Row(
             Btn("다시 점검", true, (_, _) => StartScan()), Btn("계정 보호 안내", false, (_, _) => ShowGuide()), Btn("결과 저장", false, (_, _) => SaveReport()),
-            Btn("예방 설정 되돌리기", false, async (_, _) =>
-            {
-                undo.Text = "되돌리는 중입니다.";
-                var r = await _s.Privileged.UnblockAllAsync(default);
-                undo.Text = (r.Ok ? "✔ " : "✖ ") + r.Message;
-            }),
+            undoBtn,
             Btn("기록 폴더 열기", false, (_, _) => OpenDataFolder())));
         page.Children.Add(undo);
         page.Children.Add(Text("'예방 설정 되돌리기'는 이 프로그램이 추가한 방화벽 규칙과 hosts 줄만 제거합니다. 격리한 파일과 삭제한 악성 항목은 되살리지 않습니다.", 13, color: Muted));
@@ -404,9 +463,9 @@ public sealed class MainWindow : Window
         try
         {
             var b = Path.ChangeExtension(d.FileName, null);
-            File.WriteAllText(b + ".html", ReportBuilder.Html(_scan, _s.Ioc, _actions));
-            File.WriteAllText(b + ".txt", ReportBuilder.Text(_scan, _s.Ioc, _actions));
-            File.WriteAllText(b + ".json", ReportBuilder.JsonReport(_scan, _s.Ioc, _actions));
+            File.WriteAllText(b + ".html", ReportBuilder.Html(_scan, _s.Ioc, _sessionActions, _worst));
+            File.WriteAllText(b + ".txt", ReportBuilder.Text(_scan, _s.Ioc, _sessionActions, _worst));
+            File.WriteAllText(b + ".json", ReportBuilder.JsonReport(_scan, _s.Ioc, _sessionActions, _worst));
             MessageBox.Show(this, "HTML, TXT, JSON 세 파일로 저장했습니다.\n사용자 이름, PC 이름, SID, 경로 일부, 토큰은 가렸습니다. 그래도 공유 전에 한 번 읽어 보세요.", "저장 완료", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)

@@ -26,7 +26,8 @@ public sealed partial class Masker(TargetUser t, IEnumerable<string> installDirs
     [GeneratedRegex(@"\b[0-9a-fA-F]{32,128}\b")] private static partial Regex LongHex();
     [GeneratedRegex(@"(?i)(bearer\s+)\S+")] private static partial Regex Bearer();
     [GeneratedRegex(@"(?i)(https?://[^\s?""'<>]+)\?[^\s""'<>]*")] private static partial Regex UrlQuery();
-    [GeneratedRegex(@"(?i)\b[A-Z]:\\Users\\[^\\\s""']+")] private static partial Regex AnyProfile();
+    [GeneratedRegex(@"(?i)\b[A-Z]:\\Users\\[^\\""'\r\n]+")] private static partial Regex AnyProfile();
+    [GeneratedRegex(@"(?i)\b[A-Z]:\\(?:[^\\""'<>|\r\n]+\\)*(?<last>[^\\\s""'<>|]*)")] private static partial Regex AnyDrivePath();
     [GeneratedRegex(@"(?i)\b(?:token|password|passwd|pwd|secret|api[_-]?key)=\S+")] private static partial Regex KeyValueSecret();
 
     public string Mask(string? s)
@@ -34,6 +35,8 @@ public sealed partial class Masker(TargetUser t, IEnumerable<string> installDirs
         if (string.IsNullOrEmpty(s)) return s ?? "";
         foreach (var (from, to) in _roots) s = s.Replace(from, to, StringComparison.OrdinalIgnoreCase);
         s = AnyProfile().Replace(s, "%USERPROFILE%");
+        // 알려진 위치 밖의 경로에는 폴더 이름에 실명이 들어 있을 수 있어 파일 이름만 남긴다.
+        s = AnyDrivePath().Replace(s, m => @"<다른 위치>\" + m.Groups["last"].Value);
         s = UrlQuery().Replace(s, "$1?<가림>");
         s = Bearer().Replace(s, "$1<가림>");
         s = KeyValueSecret().Replace(s, "<가림>");
@@ -81,7 +84,12 @@ public static class ReportBuilder
     public static string OutcomeLabel(ItemOutcome o) => OutcomeText(o);
     public static string StatusLabel(CheckStatus s) => StatusText(s);
 
-    public static string Text(ScanResult scan, IocData ioc, IReadOnlyList<ItemResult>? actions = null)
+    private static string? HistoryLine(ScanResult scan, ScanSnapshot? worst) =>
+        worst is { Risk: OverallRisk.High } && (scan.Risk != OverallRisk.High || worst.CurrentHighRuleIds.Length > 0)
+            ? $"이전 점검 기록: {worst.At:yyyy-MM-dd HH:mm}에 고위험 증거가 있었습니다(규칙 {string.Join(", ", worst.HighRuleIds)}). 현재 결과만으로 과거 노출 가능성이 없어지지 않습니다."
+            : null;
+
+    public static string Text(ScanResult scan, IocData ioc, IReadOnlyList<ItemResult>? actions = null, ScanSnapshot? worst = null)
     {
         var m = new Masker(scan.Target, scan.Installs.Select(i => i.LauncherDir), ioc);
         var sb = new StringBuilder();
@@ -89,6 +97,7 @@ public static class ReportBuilder
         sb.AppendLine($"도구 {scan.ToolVersion} / 규칙 {scan.RuleVersion} / 점검 {scan.FinishedAt:yyyy-MM-dd HH:mm zzz}");
         sb.AppendLine($"결과: {Verdict.Headline(scan.Risk, scan.Completeness)}");
         sb.AppendLine(Verdict.Explanation(scan.Risk, scan.Completeness));
+        if (HistoryLine(scan, worst) is { } hl) sb.AppendLine(hl);
         sb.AppendLine("이 프로그램은 운영사와 무관합니다. 결과는 알려진 지표와 비교한 것으로, 안전을 보장하지 않습니다.");
         sb.AppendLine();
         foreach (var f in ToShareable(scan, ioc))
@@ -108,7 +117,7 @@ public static class ReportBuilder
         return sb.ToString();
     }
 
-    public static string JsonReport(ScanResult scan, IocData ioc, IReadOnlyList<ItemResult>? actions = null)
+    public static string JsonReport(ScanResult scan, IocData ioc, IReadOnlyList<ItemResult>? actions = null, ScanSnapshot? worst = null)
     {
         var m = new Masker(scan.Target, scan.Installs.Select(i => i.LauncherDir), ioc);
         return JsonSerializer.Serialize(new
@@ -116,12 +125,13 @@ public static class ReportBuilder
             tool = "NIKKE PC 안전 점검 도우미 (비공식)", toolVersion = scan.ToolVersion, ruleVersion = scan.RuleVersion,
             finishedAt = scan.FinishedAt, risk = scan.Risk, completeness = scan.Completeness,
             headline = Verdict.Headline(scan.Risk, scan.Completeness),
+            history = HistoryLine(scan, worst),
             findings = ToShareable(scan, ioc),
             actions = actions?.Select(a => new { a.Title, a.Kind, a.Outcome, Message = m.Mask(a.Message), a.At }),
         }, Json.Options);
     }
 
-    public static string Html(ScanResult scan, IocData ioc, IReadOnlyList<ItemResult>? actions = null)
+    public static string Html(ScanResult scan, IocData ioc, IReadOnlyList<ItemResult>? actions = null, ScanSnapshot? worst = null)
     {
         static string E(string? s) => WebUtility.HtmlEncode(s ?? "");
         var m = new Masker(scan.Target, scan.Installs.Select(i => i.LauncherDir), ioc);
@@ -130,6 +140,7 @@ public static class ReportBuilder
         sb.Append("<style>body{font-family:'Malgun Gothic',system-ui,sans-serif;max-width:860px;margin:24px auto;padding:0 16px;color:#1f2733;line-height:1.6}.card{border:1px solid #d5dbe3;border-radius:10px;padding:14px 18px;margin:12px 0}.tag{font-weight:700}small{color:#5b6673}code{word-break:break-all}</style></head><body>");
         sb.Append($"<h1>NIKKE PC 안전 점검 도우미 (비공식) 결과</h1><p><small>도구 {E(scan.ToolVersion)} · 규칙 {E(scan.RuleVersion)} · {E(scan.FinishedAt.ToString("yyyy-MM-dd HH:mm zzz"))}</small></p>");
         sb.Append($"<div class=\"card\"><h2>{E(Verdict.Headline(scan.Risk, scan.Completeness))}</h2><p>{E(Verdict.Explanation(scan.Risk, scan.Completeness))}</p><p><small>운영사와 무관한 도구입니다. 알려진 지표와 비교한 결과이며 안전을 보장하지 않습니다.</small></p></div>");
+        if (HistoryLine(scan, worst) is { } hl) sb.Append($"<div class=\"card\"><p>{E(hl)}</p></div>");
         foreach (var f in ToShareable(scan, ioc))
         {
             sb.Append($"<div class=\"card\"><div class=\"tag\">[{E(StatusText(f.Status))}] {E(f.Title)}</div><p>{E(f.Detail)}</p><small>{E(f.RuleId)}");

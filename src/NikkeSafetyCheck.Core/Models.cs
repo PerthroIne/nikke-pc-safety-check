@@ -82,7 +82,7 @@ public sealed record ScanResult
     public required bool Cancelled { get; init; }
     public bool LauncherRunning { get; init; }
     public OverallRisk Risk => Verdict.RiskOf(Findings);
-    public Completeness Completeness => Verdict.CompletenessOf(Findings);
+    public Completeness Completeness => Cancelled ? Completeness.Partial : Verdict.CompletenessOf(Findings);
 }
 
 public sealed record ScanProgress(string Message, int Done, int Total);

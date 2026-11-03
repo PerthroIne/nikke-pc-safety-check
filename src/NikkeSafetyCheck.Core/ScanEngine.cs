@@ -17,7 +17,9 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
         Step("설치 위치를 찾는 중");
         Guard(ctx, "NSC-INSTALL", "니케 런처 설치 위치", true, () =>
         {
-            installs = InstallLocator.Locate(svc.InstallHints, req.ExtraFolders, req.Limits, ct);
+            installs = InstallLocator.Locate(svc.InstallHints, req.ExtraFolders, req.Limits, ct, out var searchLimited);
+            if (searchLimited)
+                ctx.Unknown("NSC-INSTALL", "니케 런처 설치 위치", "폴더 탐색 제한에 걸려 일부 드라이브는 끝까지 찾지 못했습니다. 다른 곳에 또 설치했다면 폴더를 직접 선택하세요.", false);
             if (installs.Count > 0)
                 ctx.Add("NSC-INSTALL", "니케 런처 설치 위치", $"{installs.Count}곳을 찾았습니다.", CheckStatus.NotApplicable, EvidenceType.Coverage, Confidence.High, source: "motherSphere");
         });
@@ -25,11 +27,11 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
         Step("런처 로그를 확인하는 중");
         Guard(ctx, "NSC-LOG-EXEC", "런처 실행 로그(debug.log)", true, () => ScanExecutionLogs(ctx, installs));
         Step("보조 로그를 확인하는 중");
-        Guard(ctx, "NSC-LOG-TINYGET", "다운로드 보조 로그(tinyget)", false, () => ScanTinyget(ctx, installs));
+        Guard(ctx, "NSC-LOG-TINYGET", "다운로드 보조 로그(tinyget)", true, () => ScanTinyget(ctx, installs));
         Step("런처 저장 상태를 확인하는 중");
-        Guard(ctx, "NSC-LS-STATE", "런처 Local Storage 상태 문자열", false, () => ScanLocalStorage(ctx));
+        Guard(ctx, "NSC-LS-STATE", "런처 Local Storage 상태 문자열", true, () => ScanLocalStorage(ctx));
         Step("런처 캐시를 확인하는 중");
-        Guard(ctx, "NSC-CACHE-LOADER", "런처 캐시의 로더 주소", false, () => ScanLoaderCache(ctx));
+        Guard(ctx, "NSC-CACHE-LOADER", "런처 캐시의 로더 주소", true, () => ScanLoaderCache(ctx));
 
         Step("사용자 COM 등록을 확인하는 중");
         var coms = new List<ComObservation>();
@@ -39,6 +41,7 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
         var dllPaths = new List<DllObservation>();
         Guard(ctx, "NSC-DLL-SCAN", "의심 DLL", true, () => dllPaths = ScanDlls(ctx));
         EvaluatePersistence(ctx, coms, dllPaths);
+        Guard(ctx, "NSC-COM-VARIANT", "다른 CLSID의 사용자 COM 등록", false, () => ScanComVariants(ctx));
 
         Step("임시 폴더 파일 이름을 확인하는 중");
         Guard(ctx, "NSC-TEMP", "에이전트 임시 파일 이름", false, () => ScanTemp(ctx));
@@ -162,7 +165,7 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
                 c.Add(id, title, $"페이로드 다운로드 관련 기록 파일 {hits}개, 에이전트 스크립트 이름의 파일 {luaFiles}개를 찾았습니다. 다운로드 흔적만으로 실행을 확정할 수는 없지만 중요한 경고입니다.",
                     CheckStatus.Found, EvidenceType.LauncherLogDownload, Confidence.Medium, Severity.Suspicious, Temporal.Past, RemediationEligibility.ManualOnly, path: dir, source: "motherSphere");
             else if (unreadable > 0)
-                c.Add(id, title, $"파일 {unreadable}개를 읽지 못했습니다. 읽은 파일에서는 일치 항목이 없었습니다.", CheckStatus.Unknown, EvidenceType.Coverage, Confidence.Low, path: dir);
+                c.Add(id, title, $"파일 {unreadable}개를 읽지 못했습니다. 읽은 파일에서는 일치 항목이 없었습니다.", CheckStatus.Unknown, EvidenceType.Coverage, Confidence.Low, path: dir, required: true, retry: "런처를 닫고 다시 점검하세요.");
             else
                 c.Add(id, title, "페이로드 다운로드 기록을 찾지 못했습니다.", CheckStatus.NotFound, EvidenceType.LauncherLogDownload, Confidence.Medium, path: dir, source: "motherSphere");
         }
@@ -199,7 +202,7 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
             c.Add(id, title, "런처 저장소에서 관련 문자열(k2f.agent)을 찾았습니다. 단독으로는 판단하기 어려워 추가 확인이 필요합니다.",
                 CheckStatus.Found, EvidenceType.AgentState, Confidence.Medium, Severity.Suspicious, Temporal.Past, RemediationEligibility.ManualOnly, path: dir, source: "motherSphere");
         else if (unreadable > 0)
-            c.Add(id, title, $"파일 {unreadable}개를 읽지 못했습니다. 런처가 켜져 있으면 잠겨 있을 수 있습니다.", CheckStatus.Unknown, EvidenceType.Coverage, Confidence.Low, path: dir);
+            c.Add(id, title, $"파일 {unreadable}개를 읽지 못했습니다. 런처가 켜져 있으면 잠겨 있을 수 있습니다.", CheckStatus.Unknown, EvidenceType.Coverage, Confidence.Low, path: dir, required: true, retry: "런처를 닫고 다시 점검하세요.");
         else
             c.Add(id, title, "일치하는 문자열을 찾지 못했습니다. 압축 저장된 내용은 찾지 못할 수 있습니다.", CheckStatus.NotFound, EvidenceType.AgentState, Confidence.Medium, path: dir, source: "motherSphere");
     }
@@ -233,7 +236,7 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
             c.Add(id, title, $"캐시 파일 {hits}개에서 악성 로더 주소를 찾았습니다. 런처가 변조 파일을 불러왔다는 흔적이며 에이전트 실행을 뜻하지는 않습니다. 런처를 다시 열기 전에 캐시 정리가 필요합니다.",
                 CheckStatus.Found, EvidenceType.LoaderCache, Confidence.Medium, Severity.Suspicious, Temporal.Past, RemediationEligibility.ManualOnly, path: root, source: "motherSphere");
         else if (skipped > 0)
-            c.Add(id, title, $"파일 {skipped}개를 제한이나 잠금 때문에 확인하지 못했습니다.", CheckStatus.Unknown, EvidenceType.Coverage, Confidence.Low, path: root);
+            c.Add(id, title, $"파일 {skipped}개를 제한이나 잠금 때문에 확인하지 못했습니다.", CheckStatus.Unknown, EvidenceType.Coverage, Confidence.Low, path: root, required: true, retry: "런처를 닫고 다시 점검하세요.");
         else
             c.Add(id, title, "일치하는 주소를 찾지 못했습니다.", CheckStatus.NotFound, EvidenceType.LoaderCache, Confidence.Medium, path: root, source: "motherSphere");
     }
@@ -271,18 +274,24 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
             {
                 if (!Directory.Exists(helper)) continue;
                 var opts = new EnumerationOptions { IgnoreInaccessible = false, AttributesToSkip = 0 };
+                void TryObserve(string dll, bool layout)
+                {
+                    // 파일 하나가 잠겨도 나머지 파일과 다른 브라우저 폴더는 계속 확인한다.
+                    try { res.Add(Observe(dll, root, layout, c.Ct)); }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException) { denied = true; }
+                }
                 var direct = Path.Combine(helper, PathSafety.DllName);
-                if (File.Exists(direct)) res.Add(Observe(direct, root, false, c.Ct));
+                if (File.Exists(direct)) TryObserve(direct, false);
                 foreach (var sub in Directory.EnumerateDirectories(helper, "*", opts))
                 {
                     c.Ct.ThrowIfCancellationRequested();
                     var dll = Path.Combine(sub, PathSafety.DllName);
-                    if (File.Exists(dll)) res.Add(Observe(dll, root, PathSafety.Hex64().IsMatch(Path.GetFileName(sub)), c.Ct));
+                    if (File.Exists(dll)) TryObserve(dll, PathSafety.Hex64().IsMatch(Path.GetFileName(sub)));
                 }
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { denied = true; }
         }
-        if (denied) c.Unknown("NSC-DLL-SCAN", "의심 DLL", "일부 브라우저 폴더를 읽지 못했습니다.", true, "브라우저를 닫고 다시 점검하세요.");
+        if (denied) c.Unknown("NSC-DLL-SCAN", "의심 DLL", "일부 파일이나 브라우저 폴더를 읽지 못했습니다.", true, "브라우저를 닫고 다시 점검하세요. 그래도 안 되면 PC를 다시 시작한 뒤 점검하세요.");
         return res;
     }
 
@@ -316,8 +325,11 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
         foreach (var com in coms)
         {
             var layout = PathSafety.TryMatchDllLayout(c.Req.Target, com.Expanded, out _);
-            var linkedDll = dlls.FirstOrDefault(d => d.Path.Equals(com.Expanded, StringComparison.OrdinalIgnoreCase));
-            var sys32 = com.Expanded.EndsWith(@"\wpc.dll", StringComparison.OrdinalIgnoreCase) && com.Expanded.Contains(@"\System32\", StringComparison.OrdinalIgnoreCase);
+            var canonical = Canonical(com.Expanded);
+            var linkedDll = dlls.FirstOrDefault(d => Canonical(d.Path).Equals(canonical, StringComparison.OrdinalIgnoreCase));
+            var systemDir = Environment.GetFolderPath(Environment.SpecialFolder.System);
+            var sys32 = systemDir.Length > 0 && canonical.Equals(Path.Combine(systemDir, "wpc.dll"), StringComparison.OrdinalIgnoreCase);
+            var fileExists = layout && SafeFileExists(com.Expanded);
             if (linkedDll is not null) linked.Add(linkedDll.Path);
 
             if (sys32)
@@ -325,6 +337,9 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
             else if (linkedDll is not null && !linkedDll.Reparse)
                 c.Add("NSC-COM-KNOWN", "사용자 COM 등록", "사용자 COM 항목이 브라우저 폴더 안의 의심 DLL을 가리킵니다. 지속 실행 장치가 현재 남아 있다는 결합 증거입니다.",
                     CheckStatus.Found, EvidenceType.PersistenceCom, Confidence.High, Severity.High, Temporal.Current, RemediationEligibility.Eligible, regKey: com.KeyPath, regValue: com.Value, required: true, source: "motherSphere");
+            else if (fileExists)
+                c.Add("NSC-COM-KNOWN", "사용자 COM 등록", "사용자 COM 항목이 악성 DLL과 같은 구조의 경로를 가리키고 파일도 있지만, 파일이 잠겨 있거나 링크여서 끝까지 확인하지 못했습니다. 지속 실행 장치가 남아 있을 수 있어 자동으로 처리하지 않습니다. PC를 다시 시작한 뒤 다시 점검하세요.",
+                    CheckStatus.Found, EvidenceType.PersistenceCom, Confidence.High, Severity.High, Temporal.Current, RemediationEligibility.ManualOnly, regKey: com.KeyPath, regValue: com.Value, required: true, source: "motherSphere");
             else if (layout)
                 c.Add("NSC-COM-KNOWN", "사용자 COM 등록", "사용자 COM 항목이 악성 DLL과 같은 구조의 경로를 가리키지만 DLL 파일은 없습니다. 백신이 DLL만 지운 경우 등에 나타나며, 설치된 적이 있다는 증거입니다.",
                     CheckStatus.Found, EvidenceType.PersistenceCom, Confidence.High, Severity.High, Temporal.Past, RemediationEligibility.Eligible, regKey: com.KeyPath, regValue: com.Value, required: true, source: "motherSphere");
@@ -343,11 +358,13 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
             var sigText = d.Signature switch { SignatureState.Valid => "유효한 서명 있음(보조 정보)", SignatureState.Unsigned => "서명 없음", SignatureState.Invalid => "서명 검증 실패", _ => "서명 확인 불가" };
             var browser = d.Root.Browser;
 
-            var high = !d.Reparse && d.Layout && (known || comLink || (structural && d.Root.IsPrimary));
+            // 알려진 악성 해시는 위치와 무관하게 고위험이다. 위치와 링크 조건은 자동 조치 자격에만 쓴다.
+            var eligible = !d.Reparse && d.Layout;
+            var high = known || (eligible && (comLink || (structural && d.Root.IsPrimary)));
             if (high)
             {
                 var why = known ? "알려진 악성 샘플 해시와 일치합니다." : comLink ? "사용자 COM 항목과 연결되어 있습니다(해시는 피해자별로 다를 수 있어 불일치를 정상 근거로 쓰지 않습니다)." : "폴더 이름이 파일 자신의 SHA-256과 같은, 보고된 악성 설치 구조와 일치합니다.";
-                c.Add("NSC-DLL-SCAN", "의심 DLL", $"{browser} 폴더에서 의심 DLL을 찾았습니다. {why} {sigText}.", CheckStatus.Found, EvidenceType.PersistenceDll, Confidence.High, Severity.High, Temporal.Current, RemediationEligibility.Eligible, path: d.Path, sha: d.Sha256, fileId: d.FileId, required: true, source: known && ioc.KnownDllSha256.First(h => h.Sha256 == d.Sha256).Source == "wormW" ? "wormW" : "motherSphere");
+                c.Add("NSC-DLL-SCAN", "의심 DLL", $"{browser} 폴더에서 의심 DLL을 찾았습니다. {why} {sigText}.", CheckStatus.Found, EvidenceType.PersistenceDll, Confidence.High, Severity.High, Temporal.Current, eligible ? RemediationEligibility.Eligible : RemediationEligibility.ManualOnly, path: d.Path, sha: d.Sha256, fileId: d.FileId, required: true, source: known && ioc.KnownDllSha256.First(h => h.Sha256 == d.Sha256).Source == "wormW" ? "wormW" : "motherSphere");
             }
             else
             {
@@ -357,10 +374,23 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
         }
         if (dlls.Count == 0 && !alreadyUnknownDll)
             c.Add("NSC-DLL-SCAN", "의심 DLL", "확인한 브라우저 폴더에서 해당 DLL을 찾지 못했습니다. PlatformExperienceHelper 폴더와 Chrome의 정상 EXE, LoadFeatures 파일은 정상일 수 있어 판정에 쓰지 않습니다.", CheckStatus.NotFound, EvidenceType.PersistenceDll, Confidence.High, required: true, source: "motherSphere");
+    }
 
-        // 알려진 CLSID 외에 같은 악성 구조를 가리키는 사용자 COM 변종을 수동 확인 대상으로 알린다.
-        try
-        {
+    private static string Canonical(string p)
+    {
+        try { return Path.TrimEndingDirectorySeparator(Path.GetFullPath(p)); }
+        catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException or System.Security.SecurityException) { return p; }
+    }
+
+    private static bool SafeFileExists(string p)
+    {
+        try { return File.Exists(p); }
+        catch (Exception e) when (e is ArgumentException or NotSupportedException or IOException or UnauthorizedAccessException) { return false; }
+    }
+
+    /// <summary>알려진 CLSID 외에 같은 악성 구조를 가리키는 사용자 COM 변종을 수동 확인 대상으로 알린다.</summary>
+    private void ScanComVariants(Ctx c)
+    {
             var classes = c.Req.Target.Sid + "_Classes";
             var variants = 0;
             foreach (var sub in svc.Registry.ListSubKeys($@"HKU\{classes}\CLSID").Take(20000))
@@ -373,8 +403,6 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
             }
             c.Add("NSC-COM-VARIANT", "다른 CLSID의 사용자 COM 등록", variants > 0 ? $"다른 CLSID {variants}개가 같은 구조의 DLL 경로를 가리킵니다. 자동으로 제거하지 않습니다." : "일치하는 항목을 찾지 못했습니다.",
                 variants > 0 ? CheckStatus.Found : CheckStatus.NotFound, EvidenceType.PersistenceCom, Confidence.Medium, variants > 0 ? Severity.Suspicious : Severity.None, variants > 0 ? Temporal.Current : Temporal.NotApplicable, variants > 0 ? RemediationEligibility.ManualOnly : RemediationEligibility.None, source: "whykusanagi");
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { c.Add("NSC-COM-VARIANT", "다른 CLSID의 사용자 COM 등록", "읽지 못했습니다.", CheckStatus.Unknown, EvidenceType.Coverage, Confidence.Low); }
     }
 
     private void ScanTemp(Ctx c)

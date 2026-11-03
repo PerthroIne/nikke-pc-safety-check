@@ -45,8 +45,9 @@ public static partial class InstallLocator
         return null;
     }
 
-    public static IReadOnlyList<LauncherInstall> Locate(IInstallHintSource src, IEnumerable<string> extraFolders, ScanLimits limits, CancellationToken ct)
+    public static IReadOnlyList<LauncherInstall> Locate(IInstallHintSource src, IEnumerable<string> extraFolders, ScanLimits limits, CancellationToken ct, out bool searchLimited)
     {
+        searchLimited = false;
         var found = new Dictionary<string, LauncherInstall>(StringComparer.OrdinalIgnoreCase);
         void Add(string? raw, string source)
         {
@@ -58,18 +59,19 @@ public static partial class InstallLocator
         foreach (var f in extraFolders) Add(f, "사용자가 선택한 폴더");
         foreach (var h in src.GetHints(ct)) { ct.ThrowIfCancellationRequested(); Add(h.RawPath, h.Source); }
 
-        var sw = Stopwatch.StartNew();
         foreach (var drive in src.GetFixedDriveRoots())
         {
             ct.ThrowIfCancellationRequested();
             foreach (var rel in CommonRelative)
                 Add(Path.Combine(drive, rel.Replace('\\', Path.DirectorySeparatorChar)), "일반 설치 경로");
-            SearchShallow(drive, Add, limits, sw, ct);
+            // 큰 드라이브 하나가 뒤쪽 드라이브의 탐색 시간을 다 쓰지 않도록 드라이브마다 따로 잰다.
+            if (!SearchShallow(drive, Add, limits, Stopwatch.StartNew(), ct)) searchLimited = true;
         }
         return found.Values.ToList();
     }
 
-    private static void SearchShallow(string root, Action<string?, string> add, ScanLimits limits, Stopwatch sw, CancellationToken ct)
+    /// <returns>제한에 걸리지 않고 끝까지 찾았으면 true.</returns>
+    private static bool SearchShallow(string root, Action<string?, string> add, ScanLimits limits, Stopwatch sw, CancellationToken ct)
     {
         var opts = new EnumerationOptions { IgnoreInaccessible = true, RecurseSubdirectories = false, AttributesToSkip = FileAttributes.ReparsePoint | FileAttributes.System };
         var queue = new Queue<(string Dir, int Depth)>();
@@ -78,7 +80,7 @@ public static partial class InstallLocator
         while (queue.TryDequeue(out var cur))
         {
             ct.ThrowIfCancellationRequested();
-            if (seen++ > limits.MaxSearchDirectories || sw.Elapsed > limits.SearchTimeBudget) return;
+            if (seen++ > limits.MaxSearchDirectories || sw.Elapsed > limits.SearchTimeBudget) return false;
             IEnumerable<string> subs;
             try { subs = Directory.EnumerateDirectories(cur.Dir, "*", opts).ToList(); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { continue; }
@@ -90,5 +92,6 @@ public static partial class InstallLocator
                 if (cur.Depth < 2 && !name.Equals("Windows", StringComparison.OrdinalIgnoreCase)) queue.Enqueue((s, cur.Depth + 1));
             }
         }
+        return true;
     }
 }

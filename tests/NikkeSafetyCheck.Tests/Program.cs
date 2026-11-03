@@ -499,6 +499,85 @@ T("14 명령/인자 주입: 설치 정보·경로·IOC 입력으로 실행 불�
         True(threw, "잘못된 IOC 통과");
     }
 });
+T("22 취소 중 사용자 CLSID 키가 있어도 충돌 없이 불완전 표시", () =>
+{
+    using var e = NewEnv();
+    e.Reg.Add($@"HKU\{Sid}_Classes\CLSID\{{AAAAAAAA-0000-0000-0000-000000000000}}\InprocServer32", new() { [""] = "x" });
+    using var c = new CancellationTokenSource(); c.Cancel();
+    var r = Scan(e, null, c.Token);
+    Eq(Completeness.Partial, r.Completeness);
+});
+T("23 읽지 못한 저장소 파일은 미발견이 아니라 불완전(Windows 잠금)", () =>
+{
+    using var e = NewEnv();
+    e.Install(); e.DebugLog("x\n");
+    var ls = Path.Combine(PathSafety.LauncherCacheDir(e.Target), "Local Storage", "leveldb"); Directory.CreateDirectory(ls);
+    var f = Path.Combine(ls, "000001.ldb"); File.WriteAllText(f, "k2f.agent.state");
+    if (!OperatingSystem.IsWindows()) return;
+    using var hold = new FileStream(f, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+    var r = Scan(e);
+    Eq(CheckStatus.Unknown, Of(r, "NSC-LS-STATE").Single().Status); Eq(Completeness.Partial, r.Completeness);
+});
+T("24 알려진 해시는 구조가 달라도 고위험, 자동 조치는 제외", () =>
+{
+    using var e = NewEnv();
+    var dir = Path.Combine(e.ChromeHelper(), "not-hex"); Directory.CreateDirectory(dir);
+    var dll = Path.Combine(dir, PathSafety.DllName); File.WriteAllBytes(dll, Encoding.ASCII.GetBytes("sample"));
+    var hash = ScanEngine.Sha256File(dll, default);
+    var json = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "src", "NikkeSafetyCheck.Core", "Data", "iocs.json")).Replace("f3e93d049851d5c19552c7d9b73c8be4580dc9d549e8f65f9f0c357c1df9d252", hash);
+    var ioc2 = IocData.Parse(json);
+    e.Install(); e.DebugLog("x\n");
+    var f = new ScanEngine(ioc2, e.Services, "t").Run(new ScanRequest { Target = e.Target, ExtraFolders = e.Installs }, null, default).Findings.Single(x => x.RuleId == "NSC-DLL-SCAN");
+    Eq(Severity.High, f.Severity); Eq(RemediationEligibility.ManualOnly, f.RemediationEligibility);
+});
+T("25 wpc.dll 이름만 흉내 낸 경로는 정상으로 보지 않음", () =>
+{
+    using var e = NewEnv();
+    e.Reg.Add($@"HKU\{Sid}_Classes\CLSID\{Clsid}\InprocServer32", new() { [""] = @"C:\Users\x\AppData\Roaming\System32\wpc.dll" });
+    e.Install(); e.DebugLog("x\n");
+    var f = Of(Scan(e), "NSC-COM-KNOWN").Single();
+    Eq(CheckStatus.Found, f.Status); Eq(Severity.Suspicious, f.Severity);
+});
+T("26 공유 보고서: 공백 사용자명, 알려진 위치 밖 경로, 이전 고위험 기록", () =>
+{
+    using var e = NewEnv();
+    e.Install();
+    var f = new Finding { RuleId = "R", Title = "t", Detail = @"C:\Users\John Smith\a.txt 와 D:\개인자료\김철수\debug.log", SourceUrl = "https://x", RuleVersion = "1", ObservedAt = default, UserSid = Sid, EvidenceType = EvidenceType.Coverage, Confidence = Confidence.Low, Status = CheckStatus.NotFound, RemediationEligibility = RemediationEligibility.None, Path = @"D:\개인자료\김철수\debug.log" };
+    var scan = new ScanResult { ScanId = "s", RuleVersion = "r", ToolVersion = "t", StartedAt = default, FinishedAt = default, Target = e.Target, Findings = [f], Installs = [], Cancelled = false };
+    var worst = new ScanSnapshot(DateTimeOffset.Now, OverallRisk.High, Completeness.Complete, ["NSC-DLL-SCAN"], ["NSC-DLL-SCAN"]);
+    foreach (var s in new[] { ReportBuilder.Html(scan, ioc, null, worst), ReportBuilder.Text(scan, ioc, null, worst), ReportBuilder.JsonReport(scan, ioc, null, worst) })
+    {
+        foreach (var bad in new[] { "John", "Smith", "김철수", "개인자료" }) True(!s.Contains(bad), bad + " 노출");
+        True(s.Contains("debug.log"), "파일 이름 유지");
+        True(s.Contains("고위험 증거가 있었습니다"), "이전 기록 누락");
+    }
+});
+TA("27 접근 거부 이동은 재부팅이 아니라 실패로 표시", async () =>
+{
+    using var e = NewEnv();
+    var dll = e.PlantDll(Encoding.ASCII.GetBytes("a"), matchName: false);
+    e.PlantCom(dll);
+    e.Install(); e.DebugLog("x\n");
+    var r = Scan(e);
+    var plan = PlanBuilder.Build(r, null);
+    var q = plan.Items.Single(i => i.Kind == PlanKind.QuarantineDll);
+    Directory.CreateDirectory(e.Data.Root);
+    File.WriteAllText(e.Data.Quarantine, "file blocks folder");
+    var res = await e.Exec().ExecuteAsync(plan, new HashSet<string> { q.Id }, r, false, null, default);
+    Eq(ItemOutcome.Failed, res.Single(x => x.ItemId == q.Id).Outcome);
+    True(File.Exists(dll));
+});
+T("28 재부팅 대기는 실제 재부팅 전에는 지워지지 않음", () =>
+{
+    using var e = NewEnv();
+    var j = Journal.Create(e.Data, "aaaaaaaa");
+    j.Write("item-result", new ItemResult("x", PlanKind.QuarantineDll, "t", ItemOutcome.PendingReboot, "m", DateTimeOffset.Now));
+    j.Write("run-finished", new { Count = 1 });
+    Journal.MarkReviewedAfterRescan(e.Data, DateTime.UtcNow.AddHours(-1));
+    Eq(1, Journal.FindPending(e.Data).PendingReboot);
+    Journal.MarkReviewedAfterRescan(e.Data, DateTime.UtcNow.AddHours(1));
+    Eq(0, Journal.FindPending(e.Data).PendingReboot);
+});
 T("15 IOC 데이터 무결성과 출처", () =>
 {
     True(ioc.BlockDomains.Contains("analytics.insightjs.com"));

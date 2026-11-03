@@ -28,10 +28,26 @@ public sealed class NetworkBlockService(string? hostsPathOverride = null)
         return false;
     }
 
+    /// <summary>이름만 보지 않고 실제 내용까지 맞는지 확인한다.</summary>
+    private static bool RuleMatches(dynamic rules, string name, string? remoteIp, string? program)
+    {
+        foreach (dynamic r in rules)
+        {
+            if ((string)r.Name != name) continue;
+            if ((bool)r.Enabled != true || (int)r.Action != Block || (int)r.Direction != Outbound) return false;
+            if (remoteIp is not null && !((string)r.RemoteAddresses).StartsWith(remoteIp, StringComparison.Ordinal)) return false;
+            if (program is not null && !string.Equals((string)r.ApplicationName, program, StringComparison.OrdinalIgnoreCase)) return false;
+            return true;
+        }
+        return false;
+    }
+
     private static void AddRule(dynamic policy, string name, string description, string? remoteIp, string? program)
     {
         dynamic rules = policy.Rules;
-        if (RuleExists(rules, name)) return;
+        if (RuleMatches(rules, name, remoteIp, program)) return;
+        // 이름은 이 앱 소유다. 누군가 내용을 바꿨거나 꺼 두었으면 다시 만든다.
+        if (RuleExists(rules, name)) rules.Remove(name);
         dynamic rule = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FWRule")!)!;
         rule.Name = name; rule.Description = description; rule.Grouping = Group;
         rule.Direction = Outbound; rule.Action = Block; rule.Enabled = true; rule.Profiles = ProfilesAll;
@@ -64,7 +80,7 @@ public sealed class NetworkBlockService(string? hostsPathOverride = null)
             var policy = Policy();
             foreach (var ip in ioc.BlockIps) AddRule(policy, IpRulePrefix + ip, "NIKKE PC 안전 점검 도우미(비공식)가 추가한 알려진 지표 IP 차단", ip, null);
             var problem = EffectiveProblem(policy);
-            var verified = ioc.BlockIps.All(ip => RuleExists(policy.Rules, IpRulePrefix + ip));
+            var verified = ioc.BlockIps.All(ip => (bool)RuleMatches(policy.Rules, IpRulePrefix + ip, ip, null));
             if (!verified) { ok = false; msgs.Add("방화벽 규칙을 확인하지 못했습니다."); }
             else if (problem is not null) { ok = false; msgs.Add(problem); }
             else msgs.Add($"방화벽 IP 차단 규칙 {ioc.BlockIps.Length}개가 적용되어 있습니다.");
@@ -96,6 +112,7 @@ public sealed class NetworkBlockService(string? hostsPathOverride = null)
             var policy = Policy();
             var id = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(exe.ToLowerInvariant())))[..12];
             AddRule(policy, LauncherRulePrefix + id, "NIKKE PC 안전 점검 도우미(비공식)가 추가한 런처 외부 통신 차단", null, exe);
+            if (!(bool)RuleMatches(policy.Rules, LauncherRulePrefix + id, null, exe)) return new NetworkActionResult(false, "방화벽 규칙을 확인하지 못했습니다.");
             var problem = EffectiveProblem(policy);
             return problem is null ? new NetworkActionResult(true, "런처 파일의 외부 통신 차단 규칙이 적용되어 있습니다. 해제하기 전에는 런처가 동작하지 않습니다.") : new NetworkActionResult(false, problem);
         }
@@ -127,7 +144,12 @@ public sealed class NetworkBlockService(string? hostsPathOverride = null)
         {
             EnsureHostsSafe();
             var original = File.ReadAllBytes(HostsPath);
-            if (HostsEditor.HasBlock(original)) { WriteInPlace(HostsEditor.Remove(original)); msgs.Add("hosts에서 이 프로그램이 추가한 줄만 제거했습니다."); }
+            if (HostsEditor.HasBlock(original))
+            {
+                WriteInPlace(HostsEditor.Remove(original));
+                File.Delete(HostsPath + ".NikkeSafetyCheck.bak");
+                msgs.Add("hosts에서 이 프로그램이 추가한 줄만 제거했습니다.");
+            }
             else msgs.Add("hosts에 이 프로그램이 추가한 구간이 없습니다.");
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException)
@@ -143,9 +165,11 @@ public sealed class NetworkBlockService(string? hostsPathOverride = null)
     /// <summary>파일을 교체하지 않고 내용만 다시 써서 ACL을 그대로 유지한다.</summary>
     private void WriteInPlace(byte[] bytes)
     {
+        // 쓰는 도중 전원이 꺼져도 사용자 내용을 복구할 수 있도록 변경 전 파일을 옆에 남긴다. 백업이 안 되면 수정하지 않는다.
+        File.Copy(HostsPath, HostsPath + ".NikkeSafetyCheck.bak", overwrite: true);
         using var fs = new FileStream(HostsPath, FileMode.Open, FileAccess.Write, FileShare.Read);
-        fs.SetLength(0);
         fs.Write(bytes);
+        fs.SetLength(bytes.Length);
         fs.Flush(true);
     }
 
@@ -177,6 +201,7 @@ public static partial class ElevatedHelper
         if (args.Length == 6) { if (args[4] != "--launcher" || verb != "block-launcher") return 64; launcher = args[5]; }
         if (verb == "block-launcher" && launcher is null) return 64;
         if (verb is not ("block-known" or "block-launcher" or "unblock" or "defender-offline")) return 64;
+        if (LoadedUserWritableModule()) return Report(args[3], new NetworkActionResult(false, "관리자 동작 전 안전 확인에 실패해 아무것도 바꾸지 않았습니다. 사용자 임시 폴더에서 불러온 구성 요소가 있습니다."));
 
         NetworkActionResult r;
         try
@@ -192,15 +217,37 @@ public static partial class ElevatedHelper
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException or Win32Exception or OperationCanceledException)
         { r = new NetworkActionResult(false, "관리자 동작을 끝내지 못했습니다."); }
+        return Report(args[3], r);
+    }
 
+    private static int Report(string pipeName, NetworkActionResult r)
+    {
         try
         {
-            using var pipe = new NamedPipeClientStream(".", args[3], PipeDirection.Out);
+            using var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.Out);
             pipe.Connect(10000);
             pipe.Write(JsonSerializer.SerializeToUtf8Bytes(r));
         }
         catch (Exception e) when (e is IOException or TimeoutException or UnauthorizedAccessException) { return r.Ok ? 3 : 4; }
         return r.Ok ? 0 : 1;
+    }
+
+    /// <summary>
+    /// 단일 파일 배포는 일부 네이티브 라이브러리를 사용자 임시 폴더에 풉니다. 그 위치의 파일은 다른 사용자 프로세스가 바꿀 수 있으므로,
+    /// 관리자 권한으로 도는 동안 하나라도 불러와져 있으면 멈춘다. 이 보조 경로는 WPF를 쓰지 않아 정상이라면 불러오지 않는다.
+    /// </summary>
+    private static bool LoadedUserWritableModule()
+    {
+        try
+        {
+            var temp = Path.GetTempPath();
+            using var self = Process.GetCurrentProcess();
+            foreach (ProcessModule m in self.Modules)
+                using (m)
+                    if (m.FileName.StartsWith(temp, StringComparison.OrdinalIgnoreCase) || m.FileName.Contains(@"\.net\", StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+        catch (Exception e) when (e is Win32Exception or InvalidOperationException or NotSupportedException) { return false; }
     }
 }
 

@@ -56,9 +56,13 @@ public sealed class WindowsRegistryStore : IRegistryStore
     {
         var rel = Relative(path);
         var i = rel.LastIndexOf('\\');
-        using var parent = Registry.Users.OpenSubKey(rel[..i], true) ?? throw new IOException("상위 키를 찾을 수 없습니다.");
-        // DeleteSubKey는 하위 키가 있으면 실패한다. 트리 삭제 API는 쓰지 않는다.
-        parent.DeleteSubKey(rel[(i + 1)..], throwOnMissingSubKey: false);
+        try
+        {
+            using var parent = Registry.Users.OpenSubKey(rel[..i], true) ?? throw new IOException("상위 키를 찾을 수 없습니다.");
+            // DeleteSubKey는 하위 키가 있으면 실패한다. 트리 삭제 API는 쓰지 않는다.
+            parent.DeleteSubKey(rel[(i + 1)..], throwOnMissingSubKey: false);
+        }
+        catch (SecurityException e) { throw new UnauthorizedAccessException(e.Message, e); }
     }
 }
 
@@ -259,6 +263,8 @@ internal static class PowerShell
             RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true,
             StandardOutputEncoding = Encoding.UTF8,
         };
+        // 사용자 폴더의 모듈이 Defender 명령을 가로채지 못하도록 시스템 모듈 경로만 쓴다.
+        psi.Environment["PSModulePath"] = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "Modules");
         psi.ArgumentList.Add("-NoProfile"); psi.ArgumentList.Add("-NonInteractive"); psi.ArgumentList.Add("-Command");
         psi.ArgumentList.Add("[Console]::OutputEncoding=[Text.Encoding]::UTF8; $ErrorActionPreference='Stop'; " + fixedScript);
         using var p = Process.Start(psi) ?? throw new InvalidOperationException("PowerShell을 시작할 수 없습니다.");

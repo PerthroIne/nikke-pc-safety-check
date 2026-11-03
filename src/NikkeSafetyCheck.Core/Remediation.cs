@@ -182,13 +182,20 @@ public sealed class Journal
         return new PendingWork(finished ? 0 : 1, pending);
     }
 
-    public static void MarkPendingResolved(DataPaths p)
+    /// <summary>
+    /// 재점검을 마친 뒤 호출한다. 재부팅 대기 항목은 그 기록 이후 실제로 재부팅한 경우에만 정리한다.
+    /// </summary>
+    public static void MarkReviewedAfterRescan(DataPaths p, DateTime bootTimeUtc)
     {
         if (!Directory.Exists(p.Journal)) return;
         var latest = Directory.EnumerateFiles(p.Journal, "*.jsonl").OrderDescending().FirstOrDefault();
-        if (latest is not null) File.Move(latest, latest + ".reviewed", overwrite: true);
+        if (latest is null) return;
+        if (FindPending(p).PendingReboot > 0 && File.GetLastWriteTimeUtc(latest) > bootTimeUtc) return;
+        File.Move(latest, latest + ".reviewed", overwrite: true);
     }
 }
+
+public sealed class EvidenceTooLargeException(string message) : IOException(message);
 
 public sealed record ExecutorDeps(
     IocData Ioc, IRegistryStore Registry, IFileIdentityProvider FileIds, IFileProtector Protector,
@@ -200,7 +207,7 @@ public sealed record ExecutorDeps(
 /// </summary>
 public sealed class RemediationExecutor(ExecutorDeps deps, TargetUser target, DataPaths paths)
 {
-    private const long MaxEvidenceBytes = 512L * 1024 * 1024;
+    private const long MaxEvidenceBytes = 2L * 1024 * 1024 * 1024;
 
     public async Task<IReadOnlyList<ItemResult>> ExecuteAsync(RemediationPlan plan, IReadOnlySet<string> selectedIds, ScanResult scan, bool dryRun, IProgress<string>? progress, CancellationToken ct)
     {
@@ -218,16 +225,21 @@ public sealed class RemediationExecutor(ExecutorDeps deps, TargetUser target, Da
             if (!selectedIds.Contains(item.Id)) { results.Add(R(item, ItemOutcome.Skipped, "선택하지 않았습니다.")); continue; }
             if (ct.IsCancellationRequested) { results.Add(R(item, ItemOutcome.Skipped, "취소되어 실행하지 않았습니다.")); continue; }
             progress?.Report(item.Title);
-            journal?.Write("item-start", new { item.Id, item.Kind });
             ItemResult r;
-            try { r = await RunItemAsync(item, scan, plan, dryRun, journal, ct); }
+            try
+            {
+                journal?.Write("item-start", new { item.Id, item.Kind });
+                r = await RunItemAsync(item, scan, plan, dryRun, journal, ct);
+            }
             catch (OperationCanceledException) { r = R(item, ItemOutcome.Aborted, "취소되었습니다."); }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
-            { r = R(item, ItemOutcome.Failed, $"처리하지 못했습니다: {FriendlyError(e)}"); }
-            journal?.Write("item-result", r);
+            catch (Exception e) { r = R(item, ItemOutcome.Failed, $"처리하지 못했습니다: {FriendlyError(e)}"); }
+            // 변경이 이미 끝난 뒤의 기록 실패 때문에 결과를 잃으면 안 된다. 결과는 화면에 그대로 전달한다.
+            try { journal?.Write("item-result", r); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { r = r with { Message = r.Message + " (변경 기록을 남기지 못했습니다.)" }; }
             results.Add(r);
         }
-        journal?.Write("run-finished", new { Count = results.Count });
+        try { journal?.Write("run-finished", new { Count = results.Count }); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         return results;
     }
 
@@ -235,8 +247,11 @@ public sealed class RemediationExecutor(ExecutorDeps deps, TargetUser target, Da
     {
         UnauthorizedAccessException => "권한이 부족합니다.",
         IOException when IsDiskFull(e) => "디스크 공간이 부족합니다.",
+        EvidenceTooLargeException => e.Message,
         IOException => "파일이 사용 중이거나 읽을 수 없습니다.",
-        _ => e.Message,
+        System.Security.SecurityException => "권한이 부족합니다.",
+        InvalidDataException or InvalidOperationException => e.Message,
+        _ => $"예상하지 못한 오류({e.GetType().Name})",
     };
     private static bool IsDiskFull(Exception e) => (e.HResult & 0xFFFF) is 0x70 or 0x27;
     private static bool IsSharingViolation(Exception e) => (e.HResult & 0xFFFF) is 0x20 or 0x21;
@@ -334,19 +349,41 @@ public sealed class RemediationExecutor(ExecutorDeps deps, TargetUser target, Da
         WriteEvidence(plan.PlanId, $"dll-{item.Id}.json", JsonSerializer.Serialize(new { path, sha256 = hash, length = new FileInfo(path).Length, lastWriteUtc = File.GetLastWriteTimeUtc(path) }, Json.Options));
         journal?.Write("before", new { item.Id, path, hash });
         try { File.Move(path, dest, overwrite: true); }
-        catch (Exception e) when (e is IOException && IsSharingViolation(e) || e is UnauthorizedAccessException)
+        catch (IOException e) when (IsSharingViolation(e))
         { return R(item, ItemOutcome.PendingReboot, "파일이 사용 중이라 옮기지 못했습니다. PC를 다시 시작한 뒤 런처를 열지 말고 이 프로그램으로 다시 점검하세요."); }
+        catch (UnauthorizedAccessException)
+        {
+            return IsLoaded(path, ct)
+                ? R(item, ItemOutcome.PendingReboot, "실행 중인 프로그램이 파일을 쓰고 있어 옮기지 못했습니다. PC를 다시 시작한 뒤 런처를 열지 말고 이 프로그램으로 다시 점검하세요.")
+                : R(item, ItemOutcome.Failed, "권한이 없어 파일을 옮기지 못했습니다. 보안 제품이 막았을 수 있습니다. 보호 기록을 확인한 뒤 다시 점검하세요.");
+        }
 
-        deps.Protector.ProtectForQuarantine(dest);
-        if (!ScanEngine.Sha256File(dest, ct).Equals(hash, StringComparison.OrdinalIgnoreCase))
-            return R(item, ItemOutcome.Failed, "격리된 파일의 해시가 달라 확인이 필요합니다.");
-        var hashDir = Path.GetDirectoryName(path)!;
-        if (PathSafety.Hex64().IsMatch(Path.GetFileName(hashDir)) && !Directory.EnumerateFileSystemEntries(hashDir).Any())
-            Directory.Delete(hashDir, recursive: false);
-        var loaded = deps.Processes.FindLoadedModule(PathSafety.DllName, ct).Hits.Count > 0;
-        return loaded
-            ? R(item, ItemOutcome.PendingReboot, "파일은 격리했지만 실행 중인 프로그램이 아직 불러와 있습니다. 작업을 저장한 뒤 PC를 다시 시작하세요.")
-            : R(item, ItemOutcome.Succeeded, "DLL을 격리했습니다. 상위 폴더와 정상 파일은 남겨 두었습니다.");
+        // 여기부터는 파일이 이미 옮겨졌다. 뒷정리가 실패해도 격리 사실을 실패로 보고하지 않는다.
+        var notes = "";
+        try { deps.Protector.ProtectForQuarantine(dest); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException) { notes += " 격리 파일 권한은 제한하지 못했습니다. 이름을 바꿔 실행되지 않게 해 두었습니다."; }
+        try
+        {
+            if (!ScanEngine.Sha256File(dest, ct).Equals(hash, StringComparison.OrdinalIgnoreCase))
+                return R(item, ItemOutcome.Failed, "파일은 옮겼지만 격리된 파일의 해시가 달라 확인이 필요합니다.");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { notes += " 격리 후 해시는 다시 확인하지 못했습니다."; }
+        try
+        {
+            var hashDir = Path.GetDirectoryName(path)!;
+            if (PathSafety.Hex64().IsMatch(Path.GetFileName(hashDir)) && !Directory.EnumerateFileSystemEntries(hashDir).Any())
+                Directory.Delete(hashDir, recursive: false);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { notes += " 비어 있는 폴더는 남았습니다."; }
+        return IsLoaded(PathSafety.DllName, ct)
+            ? R(item, ItemOutcome.PendingReboot, "파일은 격리했지만 실행 중인 프로그램이 아직 불러와 있습니다. 작업을 저장한 뒤 PC를 다시 시작하세요." + notes)
+            : R(item, ItemOutcome.Succeeded, "DLL을 격리했습니다. 상위 폴더와 정상 파일은 남겨 두었습니다." + notes);
+    }
+
+    private bool IsLoaded(string pathOrName, CancellationToken ct)
+    {
+        try { return deps.Processes.FindLoadedModule(Path.GetFileName(pathOrName), ct).Hits.Count > 0; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException) { return false; }
     }
 
     private ItemResult ClearCache(PlanItem item, ScanResult scan, bool dryRun, Journal? journal, RemediationPlan plan, CancellationToken ct)
@@ -384,7 +421,7 @@ public sealed class RemediationExecutor(ExecutorDeps deps, TargetUser target, Da
             ct.ThrowIfCancellationRequested();
             var len = new FileInfo(src).Length;
             total += len;
-            if (total > MaxEvidenceBytes) throw new IOException("증거 크기가 제한을 넘어 캐시 정리를 중단했습니다.");
+            if (total > MaxEvidenceBytes) throw new EvidenceTooLargeException("보존할 로그가 2GB를 넘어 캐시를 지우지 않았습니다. 증거를 잃지 않도록 멈췄습니다. 런처만 열지 않으면 당장 위험하지 않으니 전문가와 상의하거나 로그를 다른 곳에 복사한 뒤 진행하세요.");
             var to = Path.Combine(dest, relName);
             Directory.CreateDirectory(Path.GetDirectoryName(to)!);
             using var i = new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
