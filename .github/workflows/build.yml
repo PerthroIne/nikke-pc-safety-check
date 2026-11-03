@@ -4,6 +4,11 @@ on:
     branches: [main]
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: '릴리스 태그 (예: v0.1.0). 비워 두면 빌드와 테스트만 실행합니다.'
+        required: false
+        default: ''
 permissions:
   contents: write
 jobs:
@@ -35,8 +40,9 @@ jobs:
           GITHUB_TOKEN_FOR_PUSH: ${{ github.token }}
         run: ./scripts/push-ci-results.ps1
       - name: Create release
-        if: startsWith(github.ref, 'refs/tags/v') && steps.run.outcome == 'success'
+        if: (startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.release_tag, 'v')) && steps.run.outcome == 'success'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: ./scripts/release.ps1
