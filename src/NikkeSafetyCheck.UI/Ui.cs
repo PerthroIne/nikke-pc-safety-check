@@ -10,7 +10,7 @@ internal static class Ui
 {
     public static readonly FontFamily Font = new("Malgun Gothic, Segoe UI, Segoe UI Symbol");
     public static Brush B(string hex) { var b = (Brush)new BrushConverter().ConvertFromString(hex)!; b.Freeze(); return b; }
-    public static readonly Brush Ink = B("#1F2733"), Muted = B("#4F5B6B"), Line = B("#D5DBE3"), Page = B("#F6F7F9"), White = B("#FFFFFF"),
+    public static readonly Brush Ink = B("#1F2733"), Muted = B("#4F5B6B"), Line = B("#D5DBE3"), PageBg = B("#F6F7F9"), White = B("#FFFFFF"),
         Accent = B("#14519C"), AccentHover = B("#0F3F7A");
 
     private static ControlTemplate Template(string bg, string fg, string border, string hover) => (ControlTemplate)XamlReader.Parse($$"""

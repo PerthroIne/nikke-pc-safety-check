@@ -40,7 +40,7 @@ public sealed class MainWindow : Window
         Title = "NIKKE PC 안전 점검 도우미 (비공식)";
         Width = 960; Height = 760; MinWidth = 640; MinHeight = 500;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
-        FontFamily = Font; Background = Page; Foreground = Ink;
+        FontFamily = Font; Background = PageBg; Foreground = Ink;
         AllowDrop = true;
         Drop += OnDrop;
 
