@@ -47,7 +47,7 @@ public sealed class MainWindow : Window
         var root = new DockPanel();
         var header = new Border { Background = White, BorderBrush = Line, BorderThickness = new Thickness(0, 0, 0, 1), Padding = new Thickness(24, 14, 24, 12) };
         header.Child = Stack(
-            Text("NIKKE PC 안전 점검 도우미", 20, true, bottom: 2),
+            Text("NIKKE PC 안전 점검 도우미 (비공식)", 20, true, bottom: 2),
             Text("비공식 대응 보조 도구입니다. SHIFT UP, Level Infinite와 관련이 없습니다.", 13, color: Muted, bottom: 0));
         DockPanel.SetDock(header, Dock.Top);
         root.Children.Add(header);

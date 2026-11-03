@@ -173,9 +173,18 @@ public static class HistoryStore
         {
             var prev = LoadWorst(p);
             if (s.Risk == OverallRisk.NoKnownTraces && prev is null) return;
-            if (prev is not null && prev.Risk > s.Risk) return;
+            var cur = Snapshot(s);
+            // 다시 점검해도 이전에 본 증거를 지우지 않는다. 등급은 가장 높았던 값, 시각은 그 등급을 처음 본 때로 유지한다.
+            if (prev is not null)
+                cur = cur with
+                {
+                    At = prev.Risk >= cur.Risk ? prev.At : cur.At,
+                    Risk = prev.Risk > cur.Risk ? prev.Risk : cur.Risk,
+                    HighRuleIds = prev.HighRuleIds.Union(cur.HighRuleIds).ToArray(),
+                    CurrentHighRuleIds = prev.CurrentHighRuleIds.Union(cur.CurrentHighRuleIds).ToArray(),
+                };
             Directory.CreateDirectory(p.History);
-            File.WriteAllText(File_(p), JsonSerializer.Serialize(Snapshot(s), Json.Options));
+            File.WriteAllText(File_(p), JsonSerializer.Serialize(cur, Json.Options));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { /* 기록 실패가 점검을 막지 않는다 */ }
     }

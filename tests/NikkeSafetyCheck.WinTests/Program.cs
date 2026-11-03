@@ -35,16 +35,31 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
-        string? app = null; var e2e = false;
+        string? app = null; var e2e = false; var limited = false;
         for (var i = 0; i < args.Length; i++)
         {
             if (args[i] == "--out") _out = args[++i];
             else if (args[i] == "--app") app = args[++i];
             else if (args[i] == "--e2e") e2e = true;
+            else if (args[i] == "--limited") limited = true;
         }
         Directory.CreateDirectory(_out);
         var ioc = IocData.LoadEmbedded();
         var target = TargetUserResolver.Resolve();
+        if (limited)
+        {
+            // 관리자 권한을 뺀 일반 토큰으로 사용자 범위 점검·조치를 실제로 실행한다.
+            var result = Path.Combine(_out, "limited-result.txt");
+            try
+            {
+                using var id = WindowsIdentity.GetCurrent();
+                var admin = new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator);
+                RealFlow(ioc, target);
+                File.WriteAllText(result, $"OK admin={admin}");
+            }
+            catch (Exception ex) { File.WriteAllText(result, "FAIL " + ex); }
+            return 0;
+        }
         Console.WriteLine($"OS: {Environment.OSVersion}, 64bit={Environment.Is64BitOperatingSystem}");
 
         T("W01 대상 사용자 해석", () =>
@@ -56,6 +71,22 @@ public static class Program
         });
 
         T("W02 실제 레지스트리와 파일로 점검→조치→재점검", () => RealFlow(ioc, target));
+        T("W02b 일반 권한 토큰으로 점검→조치", () =>
+        {
+            var self = Environment.ProcessPath!;
+            var result = Path.Combine(Path.GetFullPath(_out), "limited-result.txt");
+            File.Delete(result);
+            var dll = Path.ChangeExtension(self, ".exe");
+            var inner = $"\\\"{dll}\\\" --limited --out \\\"{Path.GetFullPath(_out)}\\\"";
+            var p = Process.Start(new ProcessStartInfo("runas.exe") { Arguments = $"/trustlevel:0x20000 \"{inner}\"", UseShellExecute = false, CreateNoWindow = true })!;
+            var sw = Stopwatch.StartNew();
+            while (!File.Exists(result) && sw.Elapsed.TotalSeconds < 150) Thread.Sleep(500);
+            True(File.Exists(result), "일반 토큰 실행 결과 없음");
+            Thread.Sleep(300);
+            var text = File.ReadAllText(result);
+            Console.WriteLine("      " + text);
+            True(text.StartsWith("OK admin=False"), text);
+        });
         T("W03 HKLM 항목은 건드리지 않음", () =>
         {
             using var k = Registry.LocalMachine.OpenSubKey($@"SOFTWARE\Classes\CLSID\{Clsid}\InprocServer32");

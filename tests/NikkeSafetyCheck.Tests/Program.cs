@@ -394,6 +394,11 @@ TA("11 중간 실패·잠금: 완료 오표시 없음, 저널로 후속 처리",
     var clean = new ScanResult { ScanId = "s", RuleVersion = "r", ToolVersion = "t", StartedAt = default, FinishedAt = default, Target = e.Target, Findings = [], Installs = [], Cancelled = false };
     HistoryStore.RecordIfWorse(e.Data, clean);
     Eq(OverallRisk.High, HistoryStore.LoadWorst(e.Data)!.Risk);
+    True(HistoryStore.LoadWorst(e.Data)!.CurrentHighRuleIds.Contains("NSC-DLL-SCAN"), "조치 전 현재 증거 소실");
+    var logOnly = new ScanResult { ScanId = "s", RuleVersion = "r", ToolVersion = "t", StartedAt = default, FinishedAt = default, Target = e.Target, Installs = [], Cancelled = false,
+        Findings = r.Findings.Where(f => f.RuleId == "NSC-DLL-SCAN").Select(f => f with { Temporal = Temporal.Past }).ToList() };
+    HistoryStore.RecordIfWorse(e.Data, logOnly);
+    True(HistoryStore.LoadWorst(e.Data)!.CurrentHighRuleIds.Contains("NSC-DLL-SCAN"), "같은 등급 재점검으로 증거 소실");
 });
 TA("11b 증거 보존 실패 시 캐시 삭제 안 함, 런처 실행 중이면 중단", async () =>
 {
