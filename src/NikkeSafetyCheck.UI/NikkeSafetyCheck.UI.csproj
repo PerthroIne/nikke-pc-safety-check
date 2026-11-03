@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\NikkeSafetyCheck.Core\NikkeSafetyCheck.Core.csproj" />
+    <ProjectReference Include="..\NikkeSafetyCheck.Windows\NikkeSafetyCheck.Windows.csproj" />
+  </ItemGroup>
+</Project>

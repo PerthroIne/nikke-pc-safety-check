@@ -1,0 +1,42 @@
+name: build-test-release
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 40
+    env:
+      DOTNET_NOLOGO: 1
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/setup-dotnet@d4c94342e560b34958eacfc5d055d21461ed1c5d # v5.0.0
+        with:
+          global-json-file: global.json
+      - name: Build, test and publish
+        id: run
+        shell: pwsh
+        run: ./scripts/ci.ps1
+      - name: Keep CI results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ci-results
+          path: artifacts/ci
+      - name: Publish results to ci-results branch
+        if: always() && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN_FOR_PUSH: ${{ github.token }}
+        run: ./scripts/push-ci-results.ps1
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/v') && steps.run.outcome == 'success'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/release.ps1

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "ruleVersion": "2026.11.04-1",
+  "observedAt": "2026-11-04",
+  "reviewAfter": "2026-12-04",
+  "sources": {
+    "motherSphere": "https://gist.github.com/MotherSphere/d6c049a09ba8ac3085c51ee9df24a4e5",
+    "wormW": "https://github.com/WormW/nikke_malware_analysis",
+    "whykusanagi": "https://github.com/whykusanagi/nikke_malware"
+  },
+  "comClsid": "{E77CC89B-7401-4C04-8CED-149DB35ADD04}",
+  "logExecutionMarkers": ["k2f_chan registered", "agent started as "],
+  "logCorroboratingMarkers": ["adopted ", "resuming "],
+  "logLoaderMarkers": ["startup already in progress", "lua downloaded to log\\tinyget\\"],
+  "tinygetPayloadMarker": "insight.bundle",
+  "agentStateStrong": "k2f.agent.state",
+  "agentStateWeak": "k2f.agent",
+  "loaderCacheMarkers": ["insightjs.com/l.js", "insightjs.org/l.js"],
+  "agentTempFilePrefixes": ["k2f-bcreds-", "k2f_screen_"],
+  "knownDllSha256": [
+    { "sha256": "f3e93d049851d5c19552c7d9b73c8be4580dc9d549e8f65f9f0c357c1df9d252", "source": "wormW", "note": "공개 분석 샘플. 피해자별로 다를 수 있음" },
+    { "sha256": "350e262be1374326dee4038c217a49c2879a552d629fe46c7a743d11d29b7bbc", "source": "motherSphere", "note": "PC 1대 사례(보고). 피해자별로 다를 수 있음" }
+  ],
+  "blockDomains": ["insightjs.com", "www.insightjs.com", "analytics.insightjs.com", "insightjs.org"],
+  "blockIps": ["89.127.233.127"],
+  "watchOnlyIps": ["89.126.250.172"]
+}
