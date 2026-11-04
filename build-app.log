@@ -1,0 +1,10 @@
+  Determining projects to restore...
+  Restored D:\a\nikke-pc-safety-check\nikke-pc-safety-check\src\NikkeSafetyCheck.Core\NikkeSafetyCheck.Core.csproj (in 7.01 sec).
+  Restored D:\a\nikke-pc-safety-check\nikke-pc-safety-check\src\NikkeSafetyCheck.Windows\NikkeSafetyCheck.Windows.csproj (in 7.01 sec).
+  Restored D:\a\nikke-pc-safety-check\nikke-pc-safety-check\src\NikkeSafetyCheck.UI\NikkeSafetyCheck.UI.csproj (in 7.01 sec).
+  Restored D:\a\nikke-pc-safety-check\nikke-pc-safety-check\src\NikkeSafetyCheck.App\NikkeSafetyCheck.App.csproj (in 7.01 sec).
+  NikkeSafetyCheck.Core -> D:\a\nikke-pc-safety-check\nikke-pc-safety-check\src\NikkeSafetyCheck.Core\bin\Release\net10.0\NikkeSafetyCheck.Core.dll
+  NikkeSafetyCheck.Windows -> D:\a\nikke-pc-safety-check\nikke-pc-safety-check\src\NikkeSafetyCheck.Windows\bin\Release\net10.0-windows\NikkeSafetyCheck.Windows.dll
+  NikkeSafetyCheck.UI -> D:\a\nikke-pc-safety-check\nikke-pc-safety-check\src\NikkeSafetyCheck.UI\bin\Release\net10.0-windows\NikkeSafetyCheck.UI.dll
+  NikkeSafetyCheck.App -> D:\a\nikke-pc-safety-check\nikke-pc-safety-check\src\NikkeSafetyCheck.App\bin\Release\net10.0-windows\win-x64\NikkeSafetyCheck.dll
+  NikkeSafetyCheck.App -> D:\a\nikke-pc-safety-check\nikke-pc-safety-check\artifacts\publish\

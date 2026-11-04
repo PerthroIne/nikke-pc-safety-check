@@ -1,0 +1,42 @@
+OS: Microsoft Windows NT 10.0.26100.0, 64bit=True
+      sameUser=True
+PASS  W01 대상 사용자 해석
+      NSC-INSTALL Unknown None
+      NSC-INSTALL NotApplicable None
+      NSC-LOG-EXEC Found High
+      NSC-LOG-TINYGET Unknown None
+      NSC-LS-STATE Found High
+      NSC-CACHE-LOADER Unknown None
+      NSC-COM-KNOWN Found High
+      NSC-DLL-SCAN Found High
+      NSC-COM-VARIANT NotFound None
+      NSC-TEMP NotFound None
+      NSC-PROC-MOD Unknown None
+      NSC-NET-CONN NotFound None
+      NSC-DNS NotFound None
+      RemoveComKey Succeeded: 사용자 COM 항목을 삭제했고, 삭제가 확인되었습니다.
+      QuarantineDll Succeeded: DLL을 격리했습니다. 상위 폴더와 정상 파일은 남겨 두었습니다.
+      ClearLauncherCache Succeeded: 런처 전용 캐시를 정리했습니다. 감염 치료가 아니라 변조 파일 재사용 방지 조치입니다.
+      BlockKnownNetwork Skipped: 선택하지 않았습니다.
+PASS  W02 실제 레지스트리와 파일로 점검→조치→재점검
+      OK admin=False
+PASS  W02b 일반 권한 토큰으로 점검→조치
+      HKLM 존재=False
+PASS  W03 HKLM 항목은 건드리지 않음
+PASS  W04 정션(reparse point) 감지
+      self=Unsigned
+      dotnet.exe=Valid
+PASS  W05 서명 확인(파일을 불러오지 않음)
+PASS  W06 파일 ID는 교체 시 달라짐
+PASS  W07 관리자 보조 인자 검증
+PASS  W08 런처 차단 입력 검증
+      1차: 방화벽 IP 차단 규칙 1개가 적용되어 있습니다. hosts에 도메인 4개를 앱 소유 구간으로 추가했습니다(기존 내용 보존). 새 서버나 다른 통신 경로까지 막지는 못합니다.
+      2차: 방화벽 IP 차단 규칙 1개가 적용되어 있습니다. hosts에 도메인 4개를 앱 소유 구간으로 추가했습니다(기존 내용 보존). 새 서버나 다른 통신 경로까지 막지는 못합니다.
+      복구: 이 프로그램이 추가한 방화벽 규칙 1개를 제거했습니다. hosts에서 이 프로그램이 추가한 줄만 제거했습니다.
+PASS  W09 방화벽·hosts 실제 적용, 반복 실행, 복구
+      active=True queried=True Microsoft Defender가 기본 백신으로 동작 중입니다.
+PASS  W10 Defender·보안 제품 조회가 앱을 멈추지 않음
+PASS  W11 화면 렌더링 스크린샷
+PASS  W12 게시된 EXE 실제 흐름(UI 자동화)
+
+통과 13, 실패 0
