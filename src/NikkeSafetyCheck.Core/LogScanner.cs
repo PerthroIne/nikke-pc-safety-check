@@ -115,7 +115,7 @@ public sealed partial class LogScanner(IocData ioc)
         if (line.Length == 0) return;
         var mayMatch = ioc.LogExecutionMarkers.Concat(ioc.LogCorroboratingMarkers).Concat(ioc.LogLoaderMarkers)
             .Any(m => line.Contains(m, StringComparison.Ordinal))
-            || line.Contains(ioc.LogExposureMarker, StringComparison.OrdinalIgnoreCase) || line.Contains("k2f_chan", StringComparison.Ordinal);
+            || ioc.MentionsBlockedDomain(line) || line.Contains("k2f_chan", StringComparison.Ordinal);
         if (!mayMatch) return;
         var m = line.Length <= MaxLine ? ConsoleLine().Match(line) : Match.Empty;
         if (m.Success)
@@ -141,7 +141,7 @@ public sealed partial class LogScanner(IocData ioc)
             }
         }
         if (ioc.LogExecutionMarkers.Any(x => line.Contains(x, StringComparison.Ordinal)) || line.Contains("k2f_chan", StringComparison.Ordinal)) c.Literal++;
-        else if (line.Contains(ioc.LogExposureMarker, StringComparison.OrdinalIgnoreCase)) c.Loader++;
+        else if (ioc.MentionsBlockedDomain(line)) c.Loader++;
     }
 
     private sealed class Counter { public int Exec, Corro, Loader, Literal; public string? First, Last; }

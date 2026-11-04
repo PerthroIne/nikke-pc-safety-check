@@ -14,7 +14,7 @@ public sealed record KnownHash(string Sha256, string Source, string Note);
 public sealed partial record IocData(
     int SchemaVersion, string RuleVersion, string ObservedAt, string ReviewAfter, string SourceRevision,
     Dictionary<string, string> Sources, string ComClsid,
-    string[] LogExecutionMarkers, string[] LogCorroboratingMarkers, string LogExposureMarker, string[] LogLoaderMarkers,
+    string[] LogExecutionMarkers, string[] LogCorroboratingMarkers, string[] LogLoaderMarkers,
     string TinygetPayloadMarker, string AgentStateStrong, string AgentStateWeak,
     string[] LoaderCacheMarkers, string[] AgentTempFilePrefixes,
     KnownHash[] KnownDllSha256, string[] BlockDomains, string[] BlockIps, string[] WatchOnlyIps)
@@ -59,6 +59,21 @@ public sealed partial record IocData(
             if (p.IndexOfAny(['\\', '/', ':', '*', '?']) >= 0) throw new InvalidDataException("파일 접두사에는 경로를 넣을 수 없습니다.");
         foreach (var u in Sources.Values)
             if (!u.StartsWith("https://", StringComparison.Ordinal)) throw new InvalidDataException("출처 URL 오류");
+    }
+
+    /// <summary>차단 도메인을 호스트 경계까지 확인해 찾는다. notinsightjs.example 같은 이름은 일치로 보지 않는다.</summary>
+    public bool MentionsBlockedDomain(string text)
+    {
+        static bool HostChar(char ch) => char.IsAsciiLetterOrDigit(ch) || ch == '-';
+        foreach (var d in BlockDomains)
+            for (var i = text.IndexOf(d, StringComparison.OrdinalIgnoreCase); i >= 0; i = text.IndexOf(d, i + 1, StringComparison.OrdinalIgnoreCase))
+            {
+                if (i > 0 && (HostChar(text[i - 1]) || text[i - 1] == '.')) continue;
+                var end = i + d.Length;
+                if (end < text.Length && (HostChar(text[end]) || (text[end] == '.' && end + 1 < text.Length && HostChar(text[end + 1])))) continue;
+                return true;
+            }
+        return false;
     }
 
     public bool IsKnownDll(string sha256) => KnownDllSha256.Any(h => h.Sha256.Equals(sha256, StringComparison.OrdinalIgnoreCase));

@@ -27,15 +27,19 @@ public static partial class InstallLocator
         return s.Trim('"').Split(',')[0].Trim();
     }
 
-    [GeneratedRegex(@"[A-Za-z]:\\[^""\r\n]*?nikke_launcher\.exe", RegexOptions.IgnoreCase)] private static partial Regex ExeInReg();
+    [GeneratedRegex(@"[A-Za-z]:\\[^""\r\n]*?nikke_launcher(_hmt)?\.exe", RegexOptions.IgnoreCase)] private static partial Regex ExeInReg();
 
     /// <summary>런처가 남긴 .reg 내용에서 경로만 뽑는다. .reg를 실행하거나 레지스트리에 넣지 않는다.</summary>
     public static IEnumerable<string> PathsInRegText(string text) =>
         ExeInReg().Matches(text.Replace(@"\\", @"\")).Select(m => m.Value).Distinct(StringComparer.OrdinalIgnoreCase);
 
-    public static bool LooksLikeNikke(string dir) =>
-        File.Exists(Path.Combine(dir, "nikke_launcher.exe"))
-        || dir.Contains("nikke", StringComparison.OrdinalIgnoreCase) || dir.Contains("니케", StringComparison.Ordinal);
+    /// <summary>실행 파일이나 런처 폴더 이름으로만 판단한다. 사용자 폴더 등 상위 경로의 이름은 근거로 쓰지 않는다.</summary>
+    public static bool LooksLikeNikke(string dir)
+    {
+        if (PathSafety.LauncherExeNames.Any(n => File.Exists(Path.Combine(dir, n)))) return true;
+        static bool Named(string? p) => p is not null && (Path.GetFileName(p).Contains("nikke", StringComparison.OrdinalIgnoreCase) || Path.GetFileName(p).Contains("니케", StringComparison.Ordinal));
+        return Named(dir) || Named(Path.GetDirectoryName(dir));
+    }
 
     public static string? ValidateLauncherDir(string? candidate)
     {
@@ -65,8 +69,8 @@ public static partial class InstallLocator
         {
             var d = ValidateLauncherDir(raw);
             if (d is null || found.ContainsKey(d)) return;
-            var exe = Path.Combine(d, "nikke_launcher.exe");
-            found[d] = new LauncherInstall(d, source, File.Exists(exe) ? exe : null, LooksLikeNikke(d));
+            var exe = PathSafety.LauncherExeNames.Select(n => Path.Combine(d, n)).FirstOrDefault(File.Exists);
+            found[d] = new LauncherInstall(d, source, exe, LooksLikeNikke(d));
         }
         foreach (var f in extraFolders) Add(f, "사용자가 선택한 폴더");
         foreach (var h in src.GetHints(ct)) { ct.ThrowIfCancellationRequested(); Add(h.RawPath, h.Source); }

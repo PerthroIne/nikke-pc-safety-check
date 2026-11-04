@@ -688,8 +688,10 @@ T("35 이름에 니케가 없어도 같은 구조의 런처 폴더는 같은 기
     e.Hints.Hints.Add(new InstallHint(other, "설치 정보"));
     var r = Scan(e);
     Eq(1, r.Installs.Count); True(!r.Installs[0].IsNikke, "니케로 분류");
-    var f = Of(r, "NSC-LOG-EXEC").Single();
-    Eq(Severity.High, f.Severity); True(f.OtherLauncher); True(f.Detail.StartsWith("[니케 외 런처 폴더]"));
+    var f = Of(r, "NSC-LOG-EXEC").Single(x => x.OtherLauncher);
+    Eq(Severity.High, f.Severity); True(f.Detail.StartsWith("[니케 외 런처 폴더]"));
+    Eq(CheckStatus.Unknown, Of(r, "NSC-LOG-EXEC").Single(x => !x.OtherLauncher).Status, "니케 미확인 표시 없음");
+    Eq(Completeness.Partial, r.Completeness, "다른 런처만 찾았는데 완료 처리");
     True(Verdict.CauseNote(r.Findings)!.Contains("단정할 수는 없지만"));
     var plan = PlanBuilder.Build(r, null);
     True(!plan.Items.Any(i => i.Kind is PlanKind.ClearLauncherCache or PlanKind.BlockLauncherOutbound), "다른 런처 조치");
@@ -747,6 +749,55 @@ T("39 설치 경로 힌트: .reg 내용에서 경로만 추출, 공격 도메인
     Directory.CreateDirectory(Path.Combine(e.ChromeHelper(), new string('c', 64)));
     var dl = Of(Scan(e), "NSC-DLL-SCAN").Single();
     Eq(Severity.Suspicious, dl.Severity); Eq(RemediationEligibility.ManualOnly, dl.RemediationEligibility);
+});
+T("40 다른 런처만 찾고 깨끗해도 '미발견'이 아니라 불완전, 다른 폴더 잠금은 불완전 사유 아님", () =>
+{
+    using var e = NewEnv();
+    var other = Path.Combine(e.Root, "Games", "Other", "Launcher");
+    Directory.CreateDirectory(Path.Combine(other, "intl_service"));
+    File.WriteAllText(Path.Combine(other, "intl_service", "debug.log"), "x\n");
+    e.Hints.Hints.Add(new InstallHint(other, "설치 정보"));
+    var r = Scan(e);
+    Eq(OverallRisk.NoKnownTraces, r.Risk); Eq(Completeness.Partial, r.Completeness);
+    True(Verdict.Headline(r.Risk, r.Completeness).StartsWith("점검 불완전"));
+    var r2 = Scan(e, q => q with { DeclaredNeverInstalled = true });
+    Eq(Completeness.Complete, r2.Completeness);
+    True(Of(r2, "NSC-LOG-EXEC").Any(x => x.OtherLauncher && x.Status == CheckStatus.NotFound), "다른 런처 검사 누락");
+});
+T("41 상위 경로의 nikke 이름으로 니케 판정 안 함, 캐시 기본 체크는 니케 근거만", () =>
+{
+    using var e = NewEnv();
+    var other = Path.Combine(e.Root, "nikkefan", "Games", "OtherGame", "Launcher");
+    Directory.CreateDirectory(Path.Combine(other, "intl_service"));
+    True(!InstallLocator.LooksLikeNikke(other), "상위 경로로 판정");
+    Directory.CreateDirectory(PathSafety.LauncherCacheDir(e.Target));
+    e.Install(); e.DebugLog("x\n");
+    var d = Path.Combine(e.Target.RoamingAppData, "other_launcher", "tbs_cache", "Local Storage", "leveldb"); Directory.CreateDirectory(d);
+    File.WriteAllText(Path.Combine(d, "1.log"), "k2f.agent");
+    var plan = PlanBuilder.Build(Scan(e), null);
+    True(!plan.Items.Single(i => i.Kind == PlanKind.ClearLauncherCache).SelectedByDefault, "다른 런처 근거로 니케 캐시 체크");
+});
+T("42 도메인 경계, 보고서 폴더명 마스킹, 빈 캐시, 빈 해시 폴더 단계", () =>
+{
+    Eq(false, ioc.MentionsBlockedDomain("https://cdn.notinsightjs.com/a"), "접두 오탐");
+    Eq(false, ioc.MentionsBlockedDomain("insightjs.com.evil.net"), "접미 오탐");
+    Eq(false, ioc.MentionsBlockedDomain("insightjs.common"), "접미 오탐2");
+    True(ioc.MentionsBlockedDomain("\"https://insightjs.com/l.js?f=x\""));
+    True(ioc.MentionsBlockedDomain("host analytics.insightjs.com."));
+    using var e = NewEnv();
+    e.Install(); e.DebugLog("[1101/1:INFO:CONSOLE(1)] \"https://cdn.notinsightjs.com/x\", source: y (1)\n");
+    Eq(CheckStatus.NotFound, Of(Scan(e), "NSC-LOG-EXEC").Single().Status);
+    var cache = PathSafety.LauncherCacheDir(e.Target); Directory.CreateDirectory(cache);
+    Eq(CheckStatus.Unknown, Of(Scan(e), "NSC-CACHE-LOADER").Single().Status, "빈 캐시를 일치 없음으로 표시");
+    var d = Path.Combine(e.Target.RoamingAppData, "SecretGameName", "tbs_cache", "Local Storage", "leveldb"); Directory.CreateDirectory(d);
+    File.WriteAllText(Path.Combine(d, "1.log"), "k2f.agent.state");
+    Directory.CreateDirectory(Path.Combine(e.ChromeHelper(), new string('c', 64)));
+    var r = Scan(e);
+    foreach (var s in new[] { ReportBuilder.Html(r, ioc), ReportBuilder.Text(r, ioc), ReportBuilder.JsonReport(r, ioc) })
+        True(!s.Contains("SecretGameName"), "폴더명 노출");
+    True(ReportBuilder.Text(r, ioc).Contains(@"nikke_launcher\tbs_cache") || !OperatingSystem.IsWindows(), "니케 폴더명은 유지");
+    Eq(EvidenceStage.None, Of(r, "NSC-DLL-SCAN").Single().Stage, "DLL 없는데 지속성 단계");
+    True(Of(r, "NSC-LS-STATE").Single(x => x.OtherLauncher).Required == false);
 });
 T("15 IOC 데이터 무결성과 출처", () =>
 {

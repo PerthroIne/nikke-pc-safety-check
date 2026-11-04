@@ -21,6 +21,7 @@ public sealed partial class Masker(TargetUser t, IEnumerable<string> installDirs
         return l.Where(x => !string.IsNullOrEmpty(x.Item1)).OrderByDescending(x => x.Item1.Length).ToList();
     }
 
+    [GeneratedRegex(@"(?i)(?<r>%APPDATA%|%LOCALAPPDATA%)[\\/](?<n>[^\\/""'\r\n]+)[\\/]tbs_cache")] private static partial Regex OtherCacheFolder();
     [GeneratedRegex(@"S-1-\d+(-\d+)+")] private static partial Regex Sid();
     [GeneratedRegex(@"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")] private static partial Regex Uuid();
     [GeneratedRegex(@"\b[0-9a-fA-F]{32,128}\b")] private static partial Regex LongHex();
@@ -34,6 +35,8 @@ public sealed partial class Masker(TargetUser t, IEnumerable<string> installDirs
     {
         if (string.IsNullOrEmpty(s)) return s ?? "";
         foreach (var (from, to) in _roots) s = s.Replace(from, to, StringComparison.OrdinalIgnoreCase);
+        // 다른 런처의 폴더 이름은 어떤 게임을 쓰는지 드러내므로 가린다.
+        s = OtherCacheFolder().Replace(s, m => PathSafety.NikkeDataNames.Contains(m.Groups["n"].Value, StringComparer.OrdinalIgnoreCase) ? m.Value : $"{m.Groups["r"].Value}\\<다른 런처>\\tbs_cache");
         s = AnyProfile().Replace(s, "%USERPROFILE%");
         // 알려진 위치 밖의 경로에는 폴더 이름에 실명이 들어 있을 수 있어 파일 이름만 남긴다.
         s = AnyDrivePath().Replace(s, m => @"<다른 위치>\" + m.Groups["last"].Value);
@@ -93,7 +96,7 @@ public static class ReportBuilder
     {
         var m = new Masker(scan.Target, scan.Installs.Select(i => i.LauncherDir), ioc);
         var sb = new StringBuilder();
-        sb.AppendLine("NIKKE·관련 PC 런처 안전 점검 도우미 (비공식) — 공유용 결과");
+        sb.AppendLine("NIKKE·같은 구조 런처 안전 점검 도우미 (비공식) — 공유용 결과");
         sb.AppendLine($"도구 {scan.ToolVersion} / 규칙 {scan.RuleVersion} / 점검 {scan.FinishedAt:yyyy-MM-dd HH:mm zzz}");
         sb.AppendLine($"결과: {Verdict.Headline(scan.Risk, scan.Completeness)}");
         sb.AppendLine(Verdict.Explanation(scan.Risk, scan.Completeness));
@@ -126,7 +129,7 @@ public static class ReportBuilder
         var m = new Masker(scan.Target, scan.Installs.Select(i => i.LauncherDir), ioc);
         return JsonSerializer.Serialize(new
         {
-            tool = "NIKKE·관련 PC 런처 안전 점검 도우미 (비공식)", toolVersion = scan.ToolVersion, ruleVersion = scan.RuleVersion,
+            tool = "NIKKE·같은 구조 런처 안전 점검 도우미 (비공식)", toolVersion = scan.ToolVersion, ruleVersion = scan.RuleVersion,
             finishedAt = scan.FinishedAt, risk = scan.Risk, completeness = scan.Completeness,
             headline = Verdict.Headline(scan.Risk, scan.Completeness),
             history = HistoryLine(scan, worst),
@@ -145,7 +148,7 @@ public static class ReportBuilder
         var sb = new StringBuilder();
         sb.Append("<!doctype html><html lang=\"ko\"><head><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>점검 결과</title>");
         sb.Append("<style>body{font-family:'Malgun Gothic',system-ui,sans-serif;max-width:860px;margin:24px auto;padding:0 16px;color:#1f2733;line-height:1.6}.card{border:1px solid #d5dbe3;border-radius:10px;padding:14px 18px;margin:12px 0}.tag{font-weight:700}small{color:#5b6673}code{word-break:break-all}</style></head><body>");
-        sb.Append($"<h1>NIKKE·관련 PC 런처 안전 점검 도우미 (비공식) 결과</h1><p><small>도구 {E(scan.ToolVersion)} · 규칙 {E(scan.RuleVersion)} · {E(scan.FinishedAt.ToString("yyyy-MM-dd HH:mm zzz"))}<br>적용 출처: {E(ioc.SourceRevision)}</small></p>");
+        sb.Append($"<h1>NIKKE·같은 구조 런처 안전 점검 도우미 (비공식) 결과</h1><p><small>도구 {E(scan.ToolVersion)} · 규칙 {E(scan.RuleVersion)} · {E(scan.FinishedAt.ToString("yyyy-MM-dd HH:mm zzz"))}<br>적용 출처: {E(ioc.SourceRevision)}</small></p>");
         sb.Append($"<div class=\"card\"><h2>{E(Verdict.Headline(scan.Risk, scan.Completeness))}</h2><p>{E(Verdict.Explanation(scan.Risk, scan.Completeness))}</p><p><small>운영사와 무관한 도구입니다. 알려진 지표와 비교한 결과이며 안전을 보장하지 않습니다.</small></p></div>");
         var stages = Verdict.StagesOf(scan.Findings);
         if (stages.Count > 0) sb.Append($"<div class=\"card\"><p>확인된 증거 단계: {E(string.Join(", ", stages.Select(Verdict.StageLabel)))}</p></div>");

@@ -20,6 +20,7 @@ public static partial class PathSafety
         new("Opera", Path.Combine(t.RoamingAppData, "Opera Software", "Opera Stable"), false),
     ];
 
+    public static readonly string[] LauncherExeNames = ["nikke_launcher.exe", "nikke_launcher_hmt.exe"];
     public static readonly string[] NikkeDataNames = ["nikke_launcher", "nikke_launcher_hmt"];
 
     public static string LauncherCacheDir(TargetUser t) => Path.Combine(t.RoamingAppData, "nikke_launcher", "tbs_cache");
@@ -38,7 +39,8 @@ public static partial class PathSafety
             if (!Directory.Exists(root)) continue;
             foreach (var d in Directory.EnumerateDirectories(root, "*", opts).Take(5000))
             {
-                if (NikkeDataNames.Contains(Path.GetFileName(d), StringComparer.OrdinalIgnoreCase)) continue;
+                // 자동 정리 허용 위치(Roaming)만 니케로 취급한다. 다른 위치의 같은 이름은 일반 후보로 읽기만 한다.
+                if (root == t.RoamingAppData && NikkeDataNames.Contains(Path.GetFileName(d), StringComparer.OrdinalIgnoreCase)) continue;
                 var cache = Path.Combine(d, "tbs_cache");
                 if (Directory.Exists(cache) && !IsReparse(cache)) res.Add(cache);
             }
@@ -108,7 +110,7 @@ public static partial class PathSafety
     {
         reason = "";
         if (!IsPlainLocalPath(path)) { reason = "허용되지 않는 경로 형식"; return false; }
-        if (!Path.GetFileName(path).Equals("nikke_launcher.exe", StringComparison.OrdinalIgnoreCase)) { reason = "런처 파일 이름이 아님"; return false; }
+        if (!LauncherExeNames.Contains(Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)) { reason = "런처 파일 이름이 아님"; return false; }
         if (!File.Exists(path)) { reason = "파일 없음"; return false; }
         var dir = Path.GetDirectoryName(path)!;
         if (!Directory.Exists(Path.Combine(dir, "intl_service")) && !Directory.Exists(Path.Combine(dir, "log", "tinyget")))

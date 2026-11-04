@@ -35,6 +35,8 @@ public static class PlanBuilder
         var notes = new List<string>();
         var t = scan.Target;
         var hasRisk = scan.Risk != OverallRisk.NoKnownTraces;
+        // 다른 런처에서 나온 흔적만으로 니케 로그인 정보가 초기화되는 캐시 정리를 미리 체크하지 않는다.
+        var hasNikkeRisk = scan.Findings.Any(f => f.Status == CheckStatus.Found && f.Severity != Severity.None && !f.OtherLauncher);
 
         if (!t.ProcessIsTargetUser)
             notes.Add($"지금 프로그램이 다른 계정({t.ProcessUserName})으로 실행 중입니다. 사용자 파일과 레지스트리 조치는 대상 사용자 본인 계정으로 실행했을 때만 진행합니다.");
@@ -65,7 +67,7 @@ public static class PlanBuilder
             foreach (var cacheDir in PathSafety.NikkeCacheDirs(t).Where(Directory.Exists))
                 items.Add(new PlanItem
                 {
-                    Id = "cache-" + items.Count, Kind = PlanKind.ClearLauncherCache, Title = cacheDir.Contains("_hmt", StringComparison.OrdinalIgnoreCase) ? "니케 HMT 런처 전용 캐시 정리" : "니케 런처 전용 캐시 정리", SelectedByDefault = hasRisk,
+                    Id = "cache-" + items.Count, Kind = PlanKind.ClearLauncherCache, Title = cacheDir.Contains("_hmt", StringComparison.OrdinalIgnoreCase) ? "니케 HMT 런처 전용 캐시 정리" : "니케 런처 전용 캐시 정리", SelectedByDefault = hasNikkeRisk,
                     WhatChanges = $"%APPDATA%\\{Path.GetFileName(Path.GetDirectoryName(cacheDir))}\\tbs_cache 폴더만 지웁니다. 먼저 로그와 상태 증거를 복사해 둡니다. 브라우저 프로필은 건드리지 않습니다. 실행하면 안내글대로 tbs_cache에서 k2f.agent를 찾아도 나오지 않습니다.",
                     Warning = "감염 치료가 아닙니다. 변조 파일 재사용을 막기 위한 것이며 런처 로그인과 표시 설정이 초기화될 수 있습니다.",
                     ExpectedPath = cacheDir,
@@ -399,7 +401,7 @@ public sealed class RemediationExecutor(ExecutorDeps deps, TargetUser target, Da
         if (PathSafety.HasReparseInChain(target.RoamingAppData, dir)) return R(item, ItemOutcome.Aborted, "경로에 링크가 있어 중단했습니다.");
         if (Directory.EnumerateFileSystemEntries(dir, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0 }).Any(PathSafety.IsReparse))
             return R(item, ItemOutcome.Aborted, "캐시 안에 링크가 있어 중단했습니다.");
-        if (deps.Processes.FindByNames(["nikke_launcher", "tbs_browser"]).Count > 0)
+        if (deps.Processes.FindByNames(["nikke_launcher", "nikke_launcher_hmt", "tbs_browser"]).Count > 0)
             return R(item, ItemOutcome.Aborted, "런처가 실행 중이라 캐시가 잠겨 있을 수 있습니다. 런처를 닫고 다시 시도하세요. 런처를 다시 켜서 풀지 마세요.");
         if (dryRun) return R(item, ItemOutcome.DryRunOk, "조치 조건을 모두 통과했습니다.");
 

@@ -12,7 +12,6 @@
   "comClsid": "{E77CC89B-7401-4C04-8CED-149DB35ADD04}",
   "logExecutionMarkers": ["k2f_chan registered", "agent started as "],
   "logCorroboratingMarkers": ["adopted ", "resuming "],
-  "logExposureMarker": "insightjs",
   "logLoaderMarkers": ["startup already in progress", "lua downloaded to log\\tinyget\\"],
   "tinygetPayloadMarker": "insight.bundle",
   "agentStateStrong": "k2f.agent.state",

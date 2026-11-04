@@ -38,7 +38,7 @@
 | 캐시 정리, 증거 먼저 보존 | 반영됨 | `ClearCache`, `PreserveLogs` | 11b, W02 |
 | Defender 연결, 타사 백신 안내 | 반영됨 | `WindowsDefenderService` | 13, W10, W12(시작). 완료, 오프라인, 타사 백신은 검증 불가 |
 | 저널, 부분 실패 분리 | 수정함 | `Journal`, `ExecuteAsync` | 11 |
-| 관련 런처 구조 기반 점검, 조치 제외 (v0.2.0, 사용자 요청) | 수정함 | `InstallLocator`, `DiscoverOtherCacheDirs`, `MarkOther` | 35, 36, 37, 38. 실제 다른 런처는 검증 불가 |
+| 관련 런처 구조 기반 점검, 조치 제외 (v0.2.0, 사용자 요청) | 수정함 | `InstallLocator`, `DiscoverOtherCacheDirs`, `MarkOther` | 35~38, 40~42. 실제 다른 런처는 검증 불가 |
 | HMT판, 런처 기록 경로, 빈 해시 폴더, 접속 기록 (v0.2.0) | 수정함 | `NikkeCacheDirs`, `WindowsInstallHints`, `ScanOneCache` | 37, 39 |
 | 조치 내역 표시, 수동 확인 안내 (v0.1.1, 이용자 피드백) | 수정함 | `HistoryStore.LoadActions`, `Guidance.ManualCheckNote`, `PastActionsCard` | 33, 34, W12 |
 | 악성 항목 복구 없음, .reg 없음 | 반영됨 | 해당 코드 없음 | 코드 검토 |

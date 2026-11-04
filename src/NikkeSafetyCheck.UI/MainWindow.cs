@@ -37,7 +37,7 @@ public sealed class MainWindow : Window
     {
         _s = services;
         _data = DataPaths.ForTarget(_s.Target);
-        Title = "NIKKE·관련 PC 런처 안전 점검 도우미 (비공식)";
+        Title = "NIKKE·같은 구조 런처 안전 점검 도우미 (비공식)";
         Width = 960; Height = 760; MinWidth = 640; MinHeight = 500;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         FontFamily = Font; Background = PageBg; Foreground = Ink;
@@ -47,7 +47,7 @@ public sealed class MainWindow : Window
         var root = new DockPanel();
         var header = new Border { Background = White, BorderBrush = Line, BorderThickness = new Thickness(0, 0, 0, 1), Padding = new Thickness(24, 14, 24, 12) };
         header.Child = Stack(
-            Text("NIKKE·관련 PC 런처 안전 점검 도우미 (비공식)", 20, true, bottom: 2),
+            Text("NIKKE·같은 구조 런처 안전 점검 도우미 (비공식)", 20, true, bottom: 2),
             Text("비공식 대응 보조 도구입니다. SHIFT UP, Level Infinite와 관련이 없습니다.", 13, color: Muted, bottom: 0));
         DockPanel.SetDock(header, Dock.Top);
         root.Children.Add(header);
@@ -254,9 +254,9 @@ public sealed class MainWindow : Window
             page.Children.Add(Text($"확인하지 못한 항목 {unknown.Count}개", 17, true));
             page.Children.Add(Text("아래 항목은 '문제없음'이 아니라 '보지 못함'입니다.", 14, color: Muted));
             foreach (var f in unknown) page.Children.Add(FindingCard(f));
-            if (scan.Installs.Count == 0)
-                page.Children.Add(Card(Stack(Text("니케나 같은 구조의 런처 설치 위치를 찾지 못했습니다", 15, true),
-                    Text("다른 드라이브에 설치했다면 폴더를 선택하세요. 게임을 지웠다면 로그는 사라졌을 수 있지만, 다른 항목은 위 결과에 반영되어 있습니다. 이런 런처를 설치한 적이 전혀 없다면 '설치한 적 없음'을 눌러 주세요. 그렇게 눌러도 PC 전체를 보는 DLL, 레지스트리 검사는 계속 반영됩니다."),
+            if (!scan.Installs.Any(i => i.IsNikke))
+                page.Children.Add(Card(Stack(Text("니케 설치 위치를 찾지 못했습니다", 15, true),
+                    Text("다른 드라이브에 설치했다면 폴더를 선택하세요. 게임을 지웠다면 로그는 사라졌을 수 있지만, 다른 항목은 위 결과에 반영되어 있습니다. 니케 PC 버전을 설치한 적이 없다면 '설치한 적 없음'을 눌러 주세요. 그렇게 눌러도 PC 전체를 보는 DLL, 레지스트리 검사와 다른 런처 폴더 검사는 계속 반영됩니다."),
                     Row(Btn("설치 폴더 선택", false, (_, _) => PickFolder(true)), Btn("로그 파일 직접 선택", false, (_, _) => PickLog()), Btn("설치한 적 없음", false, (_, _) => { _neverInstalled = true; StartScan(); })))));
         }
         if (scan.Installs.Count > 0)
