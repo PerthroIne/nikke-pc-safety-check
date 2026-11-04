@@ -318,7 +318,7 @@ public sealed class WindowsInstallHints(TargetUser target) : IInstallHintSource
     public IEnumerable<InstallHint> GetHints(CancellationToken ct)
     {
         var res = new List<InstallHint>();
-        foreach (var p in new WindowsProcessInspector().FindByNames(["nikke_launcher", "nikke"]))
+        foreach (var p in new WindowsProcessInspector().FindByNames(["nikke_launcher", "nikke", "nikke_launcher_hmt"]))
             if (p.Path is not null) res.Add(new InstallHint(p.Path, "실행 중인 프로세스 경로"));
 
         void Uninstall(RegistryKey? root, string label)
@@ -332,8 +332,13 @@ public sealed class WindowsInstallHints(TargetUser target) : IInstallHintSource
                     {
                         using var k = root.OpenSubKey(name);
                         var display = k?.GetValue("DisplayName")?.ToString() ?? "";
-                        if (!display.Contains("nikke", StringComparison.OrdinalIgnoreCase) && !display.Contains("니케", StringComparison.Ordinal)) continue;
-                        foreach (var v in new[] { "InstallLocation", "InstallDir", "UninstallString", "DisplayIcon" })
+                        var publisher = k?.GetValue("Publisher")?.ToString() ?? "";
+                        // 여기서는 경로 후보만 모은다. 실제 검사 대상은 폴더 구조가 일치해야 하므로 설치만으로 판정되지 않는다.
+                        var related = display.Contains("nikke", StringComparison.OrdinalIgnoreCase) || display.Contains("니케", StringComparison.Ordinal)
+                            || name.Contains("nikke", StringComparison.OrdinalIgnoreCase)
+                            || new[] { "Level Infinite", "Proxima", "Tencent" }.Any(x => publisher.Contains(x, StringComparison.OrdinalIgnoreCase));
+                        if (!related) continue;
+                        foreach (var v in new[] { "GameInstallPath", "InstallLocation", "InstallDir", "UninstallString", "DisplayIcon" })
                             if (k?.GetValue(v)?.ToString() is { Length: > 0 } s) res.Add(new InstallHint(s, label));
                     }
                     catch (Exception e) when (e is SecurityException or IOException or UnauthorizedAccessException) { }
@@ -347,6 +352,35 @@ public sealed class WindowsInstallHints(TargetUser target) : IInstallHintSource
             Uninstall(Registry.Users.OpenSubKey($@"{target.Sid}\{U}"), "사용자 설치 정보");
         }
         catch (Exception e) when (e is SecurityException or IOException or UnauthorizedAccessException) { }
+
+        // 런처가 스스로 기록해 두는 설치 경로. 값은 경로로만 해석하고 실행하지 않는다.
+        void Value(RegistryKey? root, string sub, string? name, string label)
+        {
+            if (root is null) return;
+            try
+            {
+                using (root)
+                using (var k = root.OpenSubKey(sub))
+                    if (k?.GetValue(name)?.ToString() is { Length: > 0 } s) res.Add(new InstallHint(s, label));
+            }
+            catch (Exception e) when (e is SecurityException or IOException or UnauthorizedAccessException) { }
+        }
+        const string AppPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\nikke_launcher.exe";
+        Value(RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64), AppPath, null, "앱 경로 등록");
+        Value(RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry32), AppPath, null, "앱 경로 등록");
+        Value(RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default), $@"{target.Sid}\{AppPath}", null, "앱 경로 등록");
+        Value(RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default), $@"{target.Sid}_Classes\nikkelauncher\DefaultIcon", null, "런처 주소 등록");
+        Value(RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default), $@"{target.Sid}_Classes\nikkelauncher\Shell\Open\Command", null, "런처 주소 등록");
+        foreach (var data in PathSafety.NikkeDataNames)
+        {
+            var reg = Path.Combine(target.RoamingAppData, data, "url_protocol.reg");
+            try
+            {
+                if (File.Exists(reg) && new FileInfo(reg).Length < 1 << 20)
+                    foreach (var p in InstallLocator.PathsInRegText(File.ReadAllText(reg))) res.Add(new InstallHint(p, "런처 기록 파일"));
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        }
 
         try { res.AddRange(ReadShortcuts(ct)); }
         catch (Exception e) when (e is COMException or IOException or UnauthorizedAccessException or InvalidOperationException or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException) { }

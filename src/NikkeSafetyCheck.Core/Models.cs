@@ -35,6 +35,8 @@ public sealed record Finding
     public Severity Severity { get; init; }
     public Temporal Temporal { get; init; }
     public EvidenceStage Stage { get; init; }
+    /// <summary>니케가 아닌, 같은 구조의 런처 폴더에서 나온 결과. 게임 이름만으로 판정한 것이 아니다.</summary>
+    public bool OtherLauncher { get; init; }
     /// <summary>이 검사를 못 하면 '점검 불완전'이 되는 필수 항목인지.</summary>
     public bool Required { get; init; }
     public string? Path { get; init; }
@@ -49,7 +51,7 @@ public sealed record TargetUser(
     string Sid, string UserName, string MachineName, string ProfileDir, string LocalAppData, string RoamingAppData,
     string TempDir, bool ProcessIsTargetUser, string ProcessUserName);
 
-public sealed record LauncherInstall(string LauncherDir, string DiscoveredBy, string? ExecutablePath);
+public sealed record LauncherInstall(string LauncherDir, string DiscoveredBy, string? ExecutablePath, bool IsNikke = true);
 
 public sealed record ScanRequest
 {
@@ -67,7 +69,7 @@ public sealed record ScanLimits
     public long MaxBinaryFileBytes { get; init; } = 256L * 1024 * 1024;
     public long MaxCacheTotalBytes { get; init; } = 4L * 1024 * 1024 * 1024;
     public int MaxCacheFiles { get; init; } = 30000;
-    public int MaxSearchDirectories { get; init; } = 4000;
+    public int MaxSearchDirectories { get; init; } = 20000;
     public int MaxTempEntries { get; init; } = 200000;
     public TimeSpan SearchTimeBudget { get; init; } = TimeSpan.FromSeconds(8);
 }
@@ -109,6 +111,8 @@ public static class Verdict
     public static string? CauseNote(IEnumerable<Finding> fs)
     {
         var found = fs.Where(f => f.Status == CheckStatus.Found).ToList();
+        if (found.Any(f => f.OtherLauncher))
+            return "니케가 아닌 런처 폴더에서 같은 지표가 나왔습니다. 그 폴더의 프로그램이 원인이라고 단정할 수는 없지만, 해당 런처를 열지 말고 운영사 공지를 확인하세요. 구조를 검증하지 못한 폴더라 자동으로 정리하지 않습니다.";
         var persistence = found.Any(f => f.Stage is EvidenceStage.PersistenceInstalled or EvidenceStage.CurrentlyLoaded);
         var launcher = found.Any(f => f.RuleId is "NSC-LOG-EXEC" or "NSC-LOG-TINYGET" or "NSC-LS-STATE" or "NSC-CACHE-LOADER");
         return persistence && !launcher
@@ -144,7 +148,7 @@ public static class Verdict
             OverallRisk.High => "이 PC에서 악성 에이전트가 실행되었거나 지속 실행 장치가 설치되었다고 볼 만한 증거입니다. 실제로 어떤 정보가 빠져나갔는지는 이 프로그램으로 알 수 없습니다. 원격 명령 실행 기능이 보고되었으므로 파일을 정리한 뒤에도 과거 노출 가능성은 남습니다. 깨끗한 다른 기기에서 계정 보호 조치를 진행하세요.",
             OverallRisk.Suspicious => "관련 흔적이 있지만 이것만으로 악성 에이전트 실행을 확정할 수는 없습니다. 아래 항목을 확인하고, 중요한 계정은 예방 차원에서 깨끗한 기기로 점검하세요. 이 등급의 항목은 자동 제거 대상이 아닙니다.",
             _ when c == Completeness.Partial => "확인하지 못한 항목이 있어 판단을 내릴 수 없습니다. 아래에서 어떤 항목을 왜 못 봤는지 확인하고 다시 시도하세요.",
-            _ => "현재 알려진 지표와 일치하는 항목이 없다는 뜻입니다. 감염되지 않았다는 보장은 아닙니다. 로그가 지워졌거나 새로운 변종이면 찾지 못할 수 있습니다. 2026년 9월 27일 이후 런처를 실행한 적이 있다면 중요한 계정의 2단계 인증 점검을 권장합니다.",
+            _ => "현재 알려진 지표와 일치하는 항목이 없다는 뜻입니다. 감염되지 않았다는 보장은 아닙니다. 로그가 지워졌거나 새로운 변종이면 찾지 못할 수 있고, 다른 게임이 다른 방식으로 공격받았다면 알 수 없습니다. 2026년 9월 27일 이후 런처를 실행한 적이 있다면 중요한 계정의 2단계 인증 점검을 권장합니다.",
         };
         if (r != OverallRisk.NoKnownTraces && c == Completeness.Partial)
             body += " 또한 일부 항목은 확인하지 못했으니 아래 '확인하지 못한 항목'도 살펴보세요.";

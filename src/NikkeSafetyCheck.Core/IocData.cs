@@ -14,7 +14,7 @@ public sealed record KnownHash(string Sha256, string Source, string Note);
 public sealed partial record IocData(
     int SchemaVersion, string RuleVersion, string ObservedAt, string ReviewAfter, string SourceRevision,
     Dictionary<string, string> Sources, string ComClsid,
-    string[] LogExecutionMarkers, string[] LogCorroboratingMarkers, string[] LogLoaderMarkers,
+    string[] LogExecutionMarkers, string[] LogCorroboratingMarkers, string LogExposureMarker, string[] LogLoaderMarkers,
     string TinygetPayloadMarker, string AgentStateStrong, string AgentStateWeak,
     string[] LoaderCacheMarkers, string[] AgentTempFilePrefixes,
     KnownHash[] KnownDllSha256, string[] BlockDomains, string[] BlockIps, string[] WatchOnlyIps)

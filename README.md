@@ -1,8 +1,20 @@
-# NIKKE PC 안전 점검 도우미 (비공식)
+# NIKKE·관련 PC 런처 안전 점검 도우미 (비공식)
 
-니케 PC 런처 공급망 사고의 **알려진 흔적**을 내 PC에서 찾아 주고, 결과를 쉬운 말로 설명하며, 필요한 조치를 한 화면에서 고를 수 있게 돕는 Windows 프로그램입니다.
+니케 PC 런처 공급망 사고의 **알려진 흔적**을 내 PC에서 찾아 주고, 결과를 쉬운 말로 설명하며, 필요한 조치를 한 화면에서 고를 수 있게 돕는 Windows 프로그램입니다. v0.2.0부터 니케와 같은 구조의 다른 런처 폴더도 같은 지표로 함께 찾아봅니다.
 
 > **이 프로그램은 SHIFT UP, Level Infinite와 관련이 없는 커뮤니티 도구입니다.** 공개된 개인 분석을 바탕으로 만들었고, 운영사의 공식 확정 발표가 아닙니다. 결과는 안전을 보장하지 않습니다.
+
+## 적용 범위
+
+**확인된 피해는 니케 PC 런처입니다.** 2026-11-04 12:19 KST 보도까지 다른 게임의 피해 근거는 확인하지 못했습니다. 다만 변조 파일 일부가 공용 폴더에 있었고 공격자의 접근 범위가 밝혀지지 않아, 다른 게임이 안전하다고 볼 수도 없습니다.
+
+| 대상 | 점검 | 자동 조치 |
+|---|---|---|
+| PC 전체: 의심 DLL, 사용자 COM, 임시 파일, 메모리 모듈, 연결, DNS | 게임과 무관하게 점검 | 조건을 통과한 DLL과 COM만 |
+| 니케 런처 (일반판, HMT판) | 로그, 저장소, 캐시 | 캐시 정리, 런처 통신 차단 |
+| 같은 구조(`intl_service`, `tbs_cache`)의 다른 런처 | 같은 지표로 읽기 전용 점검 | **없음. 안내만 합니다** |
+
+게임 이름 목록으로 판정하지 않습니다. 게임이 설치되어 있다는 사실만으로는 어떤 등급도 나오지 않습니다. 구조가 다른 런처나 다른 공격 방식은 찾지 못합니다.
 
 ## 다운로드
 
@@ -49,6 +61,8 @@ Get-FileHash "$HOME\Downloads\NikkeSafetyCheck.exe" -Algorithm SHA256
 - **과거 흔적**: 로그, 저장소 기록. 그때 실행되었다는 뜻이고 지금 실행 중이라는 뜻은 아닙니다. 조치 후에도 고위험으로 남는 것이 정상입니다. 일부러 지우지 마세요.
 - **현재 상태**: DLL, 레지스트리 등록, 메모리에 불러온 모듈. 지금 남아 있는 장치입니다.
 
+**v0.1.x를 쓰셨나요?** 다운로드 링크는 같습니다. 판정 범위가 넓어졌으니 새 버전으로 한 번 더 점검하길 권합니다.
+
 자세한 설명은 [사용자 안내서](docs/USER_GUIDE.md), 판정 기준과 설계는 [설계 문서](docs/DESIGN.md), 커뮤니티에 소개할 글은 [커뮤니티 가이드](docs/COMMUNITY_GUIDE.md)를 보세요.
 
 ## 점검 항목
@@ -57,8 +71,8 @@ Get-FileHash "$HOME\Downloads\NikkeSafetyCheck.exe" -Algorithm SHA256
 |---|---|---|
 | 에이전트 실행 기록 | `<설치 위치>\Launcher\intl_service\debug.log` | 콘솔 로그 줄 형식일 때만 실행 증거로 인정 |
 | 다운로드 기록 | `Launcher\log\tinyget\` | 의심 등급 |
-| 에이전트 상태 | `%APPDATA%\nikke_launcher\tbs_cache\Local Storage\leveldb\` | `k2f.agent.state`는 고위험, 값은 읽어 기록하지 않음 |
-| 로더 캐시 | `tbs_cache\Code Cache\js`, `Cache\Cache_Data` | 의심 등급 |
+| 에이전트 상태 | `%APPDATA%\nikke_launcher\tbs_cache\Local Storage\leveldb\` (HMT판 `nikke_launcher_hmt`, 다른 런처의 `tbs_cache` 포함) | `k2f.agent.state`는 고위험, 값은 읽어 기록하지 않음 |
+| 로더 캐시, 접속 기록 | `tbs_cache\Code Cache\js`, `Cache\Cache_Data`, `Network Persistent State`, `Reporting and NEL` | 의심 등급 |
 | 지속 실행 DLL | `%LOCALAPPDATA%\Google\Chrome\User Data\PlatformExperienceHelper\<64자리>\platform_experience_helper.dll` | 해시만 계산, 불러오지 않음 |
 | 사용자 COM 등록 | `HKU\<SID>_Classes\CLSID\{E77CC89B-7401-4C04-8CED-149DB35ADD04}\InprocServer32` | HKLM의 같은 CLSID는 정상 |
 | 임시 파일 이름 | `%TEMP%\k2f-bcreds-*`, `k2f_screen_*` | 이름만 확인, 열지 않음 |
@@ -92,9 +106,9 @@ Get-FileHash "$HOME\Downloads\NikkeSafetyCheck.exe" -Algorithm SHA256
 
 ## 근거
 
-- [MotherSphere 공개 보고서](https://gist.github.com/MotherSphere/d6c049a09ba8ac3085c51ee9df24a4e5), [WormW 샘플 분석](https://github.com/WormW/nikke_malware_analysis), [whykusanagi 탐지·대응 키트](https://github.com/whykusanagi/nikke_malware)
+- [MotherSphere 공개 보고서](https://gist.github.com/MotherSphere/d6c049a09ba8ac3085c51ee9df24a4e5)와 [점검 도구 문서](https://github.com/MotherSphere/NIKKE-Launcher-Check), [WormW 샘플 분석](https://github.com/WormW/nikke_malware_analysis), [whykusanagi 탐지·대응 키트](https://github.com/whykusanagi/nikke_malware)
 - 모두 개인 분석입니다. [출처별 차이와 조사 한계](docs/SOURCES.md)를 함께 보세요. 2026-11-04 기준 공식 확정·복구 공지는 확인하지 못했습니다.
-- 같은 사고를 다루는 다른 도구: [whykusanagi/nikke_malware](https://github.com/whykusanagi/nikke_malware)(PowerShell), [Sheisback/nikke_malware_scanner](https://github.com/Sheisback/nikke_malware_scanner)(읽기 전용). 이 저장소가 품질을 보증하지는 않습니다.
+- 같은 사고를 다루는 다른 도구: [MotherSphere/NIKKE-Launcher-Check](https://github.com/MotherSphere/NIKKE-Launcher-Check)(읽기 전용, Linux/Proton 지원), [whykusanagi/nikke_malware](https://github.com/whykusanagi/nikke_malware)(PowerShell), [Sheisback/nikke_malware_scanner](https://github.com/Sheisback/nikke_malware_scanner)(읽기 전용). 이 저장소가 품질을 보증하지는 않습니다.
 
 ## 직접 빌드
 

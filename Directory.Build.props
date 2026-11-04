@@ -6,9 +6,9 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <Deterministic>true</Deterministic>
     <InvariantGlobalization>false</InvariantGlobalization>
-    <Version>0.1.1</Version>
+    <Version>0.2.0</Version>
     <Company>Unofficial community tool</Company>
-    <Product>NIKKE PC 안전 점검 도우미 (비공식)</Product>
+    <Product>NIKKE·관련 PC 런처 안전 점검 도우미 (비공식)</Product>
     <Copyright>MIT License. Not affiliated with SHIFT UP or Level Infinite.</Copyright>
     <SatelliteResourceLanguages>ko;en</SatelliteResourceLanguages>
   </PropertyGroup>

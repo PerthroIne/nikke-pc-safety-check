@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "ruleVersion": "2026.11.04-2",
-  "sourceRevision": "MotherSphere 보고서 2026-11-03 20:40 GMT 수정본 기준, WormW 2026-11-04 공개본",
+  "ruleVersion": "2026.11.04-3",
+  "sourceRevision": "MotherSphere 보고서 2026-11-03 20:40 GMT 수정본과 점검 도구 문서, WormW 2026-11-04 공개본 기준. 2026-11-04 12:19 KST 보도까지 니케 외 피해 근거 미확인",
   "observedAt": "2026-11-04",
   "reviewAfter": "2026-12-04",
   "sources": {
@@ -12,6 +12,7 @@
   "comClsid": "{E77CC89B-7401-4C04-8CED-149DB35ADD04}",
   "logExecutionMarkers": ["k2f_chan registered", "agent started as "],
   "logCorroboratingMarkers": ["adopted ", "resuming "],
+  "logExposureMarker": "insightjs",
   "logLoaderMarkers": ["startup already in progress", "lua downloaded to log\\tinyget\\"],
   "tinygetPayloadMarker": "insight.bundle",
   "agentStateStrong": "k2f.agent.state",

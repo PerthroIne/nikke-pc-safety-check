@@ -62,13 +62,13 @@ public static class PlanBuilder
             // 레지스트리를 먼저 끊어야 잠긴 DLL도 재부팅 후 다시 불러와지지 않는다.
             items = items.OrderBy(i => i.Kind == PlanKind.RemoveComKey ? 0 : 1).ToList();
 
-            if (Directory.Exists(PathSafety.LauncherCacheDir(t)))
+            foreach (var cacheDir in PathSafety.NikkeCacheDirs(t).Where(Directory.Exists))
                 items.Add(new PlanItem
                 {
-                    Id = "cache", Kind = PlanKind.ClearLauncherCache, Title = "런처 전용 캐시 정리", SelectedByDefault = hasRisk,
-                    WhatChanges = "%APPDATA%\\nikke_launcher\\tbs_cache 폴더만 지웁니다. 먼저 로그와 상태 증거를 복사해 둡니다. 브라우저 프로필은 건드리지 않습니다. 실행하면 안내글대로 tbs_cache에서 k2f.agent를 찾아도 나오지 않습니다.",
+                    Id = "cache-" + items.Count, Kind = PlanKind.ClearLauncherCache, Title = cacheDir.Contains("_hmt", StringComparison.OrdinalIgnoreCase) ? "니케 HMT 런처 전용 캐시 정리" : "니케 런처 전용 캐시 정리", SelectedByDefault = hasRisk,
+                    WhatChanges = $"%APPDATA%\\{Path.GetFileName(Path.GetDirectoryName(cacheDir))}\\tbs_cache 폴더만 지웁니다. 먼저 로그와 상태 증거를 복사해 둡니다. 브라우저 프로필은 건드리지 않습니다. 실행하면 안내글대로 tbs_cache에서 k2f.agent를 찾아도 나오지 않습니다.",
                     Warning = "감염 치료가 아닙니다. 변조 파일 재사용을 막기 위한 것이며 런처 로그인과 표시 설정이 초기화될 수 있습니다.",
-                    ExpectedPath = PathSafety.LauncherCacheDir(t),
+                    ExpectedPath = cacheDir,
                 });
         }
 
@@ -100,6 +100,9 @@ public static class PlanBuilder
                 ? $"다른 백신({string.Join(", ", defender.OtherProducts)})을 쓰고 있어 설정을 바꾸지 않습니다. 해당 제품에서 전체 검사를 직접 실행하세요."
                 : "Microsoft Defender를 사용할 수 없는 상태입니다. 쓰고 있는 보안 제품이나 Windows 보안 화면에서 전체 검사를 직접 실행하세요.");
         }
+
+        if (scan.Findings.Any(f => f.Status == CheckStatus.Found && f.OtherLauncher))
+            notes.Add("니케 외 런처 폴더에서 나온 항목은 자동으로 정리하지 않습니다. 구조를 검증하지 못해 정상 게임이 망가질 수 있습니다. 해당 런처를 열지 말고 백신 전체 검사와 운영사 공지 확인, 계정 보호를 진행하세요.");
 
         foreach (var f in scan.Findings.Where(f => f.Status == CheckStatus.Found && f.RemediationEligibility == RemediationEligibility.ManualOnly && f.Severity != Severity.None && f.EvidenceType is EvidenceType.PersistenceDll or EvidenceType.PersistenceCom or EvidenceType.AgentTempFile))
             notes.Add($"자동 제거하지 않는 항목: {f.Title}. 전문가 확인이나 보안 제품 검사를 권장합니다.");
@@ -389,9 +392,9 @@ public sealed class RemediationExecutor(ExecutorDeps deps, TargetUser target, Da
 
     private ItemResult ClearCache(PlanItem item, ScanResult scan, bool dryRun, Journal? journal, RemediationPlan plan, CancellationToken ct)
     {
-        var dir = PathSafety.LauncherCacheDir(target);
+        var dir = item.ExpectedPath ?? "";
         if (!target.ProcessIsTargetUser) return R(item, ItemOutcome.Aborted, "다른 계정으로 실행 중이어서 중단했습니다.");
-        if (!string.Equals(item.ExpectedPath, dir, StringComparison.OrdinalIgnoreCase)) return R(item, ItemOutcome.Aborted, "지정된 캐시 위치가 아니어서 중단했습니다.");
+        if (!PathSafety.NikkeCacheDirs(target).Contains(dir, StringComparer.OrdinalIgnoreCase)) return R(item, ItemOutcome.Aborted, "지정된 캐시 위치가 아니어서 중단했습니다.");
         if (!Directory.Exists(dir)) return R(item, ItemOutcome.Succeeded, "이미 없는 폴더입니다.");
         if (PathSafety.HasReparseInChain(target.RoamingAppData, dir)) return R(item, ItemOutcome.Aborted, "경로에 링크가 있어 중단했습니다.");
         if (Directory.EnumerateFileSystemEntries(dir, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0 }).Any(PathSafety.IsReparse))
@@ -430,7 +433,7 @@ public sealed class RemediationExecutor(ExecutorDeps deps, TargetUser target, Da
             i.CopyTo(o);
         }
         var n = 0;
-        foreach (var inst in scan.Installs)
+        foreach (var inst in scan.Installs.Where(i => i.IsNikke))
         {
             n++;
             var log = Path.Combine(inst.LauncherDir, "intl_service", "debug.log");
@@ -443,7 +446,7 @@ public sealed class RemediationExecutor(ExecutorDeps deps, TargetUser target, Da
         var ls = Path.Combine(cacheDir, "Local Storage", "leveldb");
         if (Directory.Exists(ls))
             foreach (var f in Directory.EnumerateFiles(ls, "*", new EnumerationOptions { AttributesToSkip = FileAttributes.ReparsePoint }))
-                Copy(f, Path.Combine("leveldb", Path.GetFileName(f) + ".data"));
+                Copy(f, Path.Combine("leveldb-" + Path.GetFileName(Path.GetDirectoryName(cacheDir)), Path.GetFileName(f) + ".data"));
     }
 
     private string EvidenceDir(string planId)

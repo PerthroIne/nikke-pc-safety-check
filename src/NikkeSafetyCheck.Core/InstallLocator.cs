@@ -11,8 +11,10 @@ public static partial class InstallLocator
     private static readonly string[] CommonRelative =
     [
         @"NIKKE", @"Program Files\NIKKE", @"Program Files (x86)\NIKKE", @"Games\NIKKE", @"Game\NIKKE",
-        @"SteamLibrary\NIKKE", @"Level Infinite\NIKKE", @"Program Files\Level Infinite\NIKKE",
+        @"SteamLibrary\NIKKE", @"Level Infinite\NIKKE", @"Program Files\Level Infinite\NIKKE", @"Games\Level Infinite\NIKKE",
     ];
+
+    private static readonly HashSet<string> SkipDirs = new(StringComparer.OrdinalIgnoreCase) { "Windows", "AppData", "node_modules", ".git" };
 
     [GeneratedRegex(@"^\s*""?(?<p>[^""]+?\.exe)""?(\s|,|$)", RegexOptions.IgnoreCase)] private static partial Regex ExeInCommand();
 
@@ -24,6 +26,16 @@ public static partial class InstallLocator
         if (m.Success) return m.Groups["p"].Value.Trim();
         return s.Trim('"').Split(',')[0].Trim();
     }
+
+    [GeneratedRegex(@"[A-Za-z]:\\[^""\r\n]*?nikke_launcher\.exe", RegexOptions.IgnoreCase)] private static partial Regex ExeInReg();
+
+    /// <summary>런처가 남긴 .reg 내용에서 경로만 뽑는다. .reg를 실행하거나 레지스트리에 넣지 않는다.</summary>
+    public static IEnumerable<string> PathsInRegText(string text) =>
+        ExeInReg().Matches(text.Replace(@"\\", @"\")).Select(m => m.Value).Distinct(StringComparer.OrdinalIgnoreCase);
+
+    public static bool LooksLikeNikke(string dir) =>
+        File.Exists(Path.Combine(dir, "nikke_launcher.exe"))
+        || dir.Contains("nikke", StringComparison.OrdinalIgnoreCase) || dir.Contains("니케", StringComparison.Ordinal);
 
     public static string? ValidateLauncherDir(string? candidate)
     {
@@ -54,7 +66,7 @@ public static partial class InstallLocator
             var d = ValidateLauncherDir(raw);
             if (d is null || found.ContainsKey(d)) return;
             var exe = Path.Combine(d, "nikke_launcher.exe");
-            found[d] = new LauncherInstall(d, source, File.Exists(exe) ? exe : null);
+            found[d] = new LauncherInstall(d, source, File.Exists(exe) ? exe : null, LooksLikeNikke(d));
         }
         foreach (var f in extraFolders) Add(f, "사용자가 선택한 폴더");
         foreach (var h in src.GetHints(ct)) { ct.ThrowIfCancellationRequested(); Add(h.RawPath, h.Source); }
@@ -87,9 +99,11 @@ public static partial class InstallLocator
             foreach (var s in subs)
             {
                 var name = Path.GetFileName(s);
-                if (name.Contains("nikke", StringComparison.OrdinalIgnoreCase) || name.Contains("니케", StringComparison.Ordinal))
+                // 게임 이름 목록이 아니라 폴더 구조로 찾는다. 이름에 니케가 없어도 같은 구조면 같은 지표로 검사한다.
+                if (name.Contains("nikke", StringComparison.OrdinalIgnoreCase) || name.Contains("니케", StringComparison.Ordinal)
+                    || Directory.Exists(Path.Combine(s, "intl_service")))
                     add(s, "제한된 폴더 탐색");
-                if (cur.Depth < 2 && !name.Equals("Windows", StringComparison.OrdinalIgnoreCase)) queue.Enqueue((s, cur.Depth + 1));
+                if (cur.Depth < 4 && !SkipDirs.Contains(name)) queue.Enqueue((s, cur.Depth + 1));
             }
         }
         return true;

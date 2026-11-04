@@ -37,7 +37,7 @@ public sealed class MainWindow : Window
     {
         _s = services;
         _data = DataPaths.ForTarget(_s.Target);
-        Title = "NIKKE PC 안전 점검 도우미 (비공식)";
+        Title = "NIKKE·관련 PC 런처 안전 점검 도우미 (비공식)";
         Width = 960; Height = 760; MinWidth = 640; MinHeight = 500;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         FontFamily = Font; Background = PageBg; Foreground = Ink;
@@ -47,7 +47,7 @@ public sealed class MainWindow : Window
         var root = new DockPanel();
         var header = new Border { Background = White, BorderBrush = Line, BorderThickness = new Thickness(0, 0, 0, 1), Padding = new Thickness(24, 14, 24, 12) };
         header.Child = Stack(
-            Text("NIKKE PC 안전 점검 도우미 (비공식)", 20, true, bottom: 2),
+            Text("NIKKE·관련 PC 런처 안전 점검 도우미 (비공식)", 20, true, bottom: 2),
             Text("비공식 대응 보조 도구입니다. SHIFT UP, Level Infinite와 관련이 없습니다.", 13, color: Muted, bottom: 0));
         DockPanel.SetDock(header, Dock.Top);
         root.Children.Add(header);
@@ -81,7 +81,7 @@ public sealed class MainWindow : Window
             Text("이 PC에서 니케 PC 런처 사고의 알려진 흔적을 찾아 드립니다", 18, true),
             Text("2026년 11월, 니케 PC 런처가 불러오는 공식 CDN 파일이 변조되어 원격 제어 에이전트가 설치될 수 있었다는 공개 분석이 나왔습니다. 이 프로그램은 그 분석에 나온 지표를 이 PC에서 확인합니다."),
             Bullets([
-                "런처 로그와 저장소에서 에이전트 실행 기록을 찾습니다.",
+                "니케 런처와 같은 구조의 다른 런처에서 에이전트 실행 기록을 찾습니다.",
                 "Chrome 폴더의 의심 DLL과 사용자 레지스트리 등록을 확인합니다.",
                 "결과를 쉬운 말로 설명하고, 필요한 조치를 한 화면에서 고를 수 있게 합니다.",
             ]),
@@ -98,6 +98,7 @@ public sealed class MainWindow : Window
 
         page.Children.Add(Card(Stack(Text("지금 꼭 기억하세요", 15, true, B("#8E1F17")), Bullets([
             "공식 복구 공지를 확인하기 전까지 니케 PC 런처를 열지 마세요. 공개 분석에 따르면 런처를 열 때 악성 코드가 내려올 수 있었습니다.",
+            Guidance.ScopeNotice,
             Guidance.StatusNotice,
         ])), "#FDECEA", "#EDB7B1"));
         Show(page);
@@ -254,8 +255,8 @@ public sealed class MainWindow : Window
             page.Children.Add(Text("아래 항목은 '문제없음'이 아니라 '보지 못함'입니다.", 14, color: Muted));
             foreach (var f in unknown) page.Children.Add(FindingCard(f));
             if (scan.Installs.Count == 0)
-                page.Children.Add(Card(Stack(Text("니케 설치 위치를 찾지 못했습니다", 15, true),
-                    Text("다른 드라이브에 설치했다면 폴더를 선택하세요. 게임을 지웠다면 로그는 사라졌을 수 있지만, 다른 항목은 위 결과에 반영되어 있습니다. PC 버전을 설치한 적이 전혀 없다면 '설치한 적 없음'을 눌러 주세요."),
+                page.Children.Add(Card(Stack(Text("니케나 같은 구조의 런처 설치 위치를 찾지 못했습니다", 15, true),
+                    Text("다른 드라이브에 설치했다면 폴더를 선택하세요. 게임을 지웠다면 로그는 사라졌을 수 있지만, 다른 항목은 위 결과에 반영되어 있습니다. 이런 런처를 설치한 적이 전혀 없다면 '설치한 적 없음'을 눌러 주세요. 그렇게 눌러도 PC 전체를 보는 DLL, 레지스트리 검사는 계속 반영됩니다."),
                     Row(Btn("설치 폴더 선택", false, (_, _) => PickFolder(true)), Btn("로그 파일 직접 선택", false, (_, _) => PickLog()), Btn("설치한 적 없음", false, (_, _) => { _neverInstalled = true; StartScan(); })))));
         }
         if (scan.Installs.Count > 0)
@@ -549,6 +550,8 @@ public sealed class MainWindow : Window
         ]))));
         page.Children.Add(Card(Stack(Text("지원 범위", 16, true), Bullets([
             "Windows x64 대상입니다. ARM64 Windows, Linux, Steam Deck(Proton)은 지원하지 않습니다.",
+            "니케 외 런처는 게임 목록이 아니라 폴더 구조(intl_service, tbs_cache)로 찾습니다. 구조가 다른 런처나 다른 공격 방식은 찾지 못합니다.",
+            "니케 외 런처 폴더는 읽기만 합니다. 캐시 정리와 통신 차단 대상이 아닙니다.",
             "Linux와 Steam Deck에서 런처를 실행했다면 공개 분석상 Proton이 보호막이 되지 않으므로, 홈 폴더의 비밀 값을 노출된 것으로 보고 계정 보호 안내를 따르세요.",
             "다른 Windows 계정은 점검하지 않습니다. 각 계정에서 따로 실행하세요.",
         ]))));

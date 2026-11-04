@@ -20,7 +20,31 @@ public static partial class PathSafety
         new("Opera", Path.Combine(t.RoamingAppData, "Opera Software", "Opera Stable"), false),
     ];
 
+    public static readonly string[] NikkeDataNames = ["nikke_launcher", "nikke_launcher_hmt"];
+
     public static string LauncherCacheDir(TargetUser t) => Path.Combine(t.RoamingAppData, "nikke_launcher", "tbs_cache");
+
+    /// <summary>자동 정리가 허용되는 니케 런처 전용 캐시 위치(일반판과 HMT판).</summary>
+    public static IReadOnlyList<string> NikkeCacheDirs(TargetUser t) =>
+        NikkeDataNames.Select(n => Path.Combine(t.RoamingAppData, n, "tbs_cache")).ToList();
+
+    /// <summary>같은 구조의 다른 런처 저장소를 찾는다. 읽기 전용 검사에만 쓰고 조치 대상으로 삼지 않는다.</summary>
+    public static IReadOnlyList<string> DiscoverOtherCacheDirs(TargetUser t)
+    {
+        var res = new List<string>();
+        var opts = new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint };
+        foreach (var root in new[] { t.RoamingAppData, t.LocalAppData })
+        {
+            if (!Directory.Exists(root)) continue;
+            foreach (var d in Directory.EnumerateDirectories(root, "*", opts).Take(5000))
+            {
+                if (NikkeDataNames.Contains(Path.GetFileName(d), StringComparer.OrdinalIgnoreCase)) continue;
+                var cache = Path.Combine(d, "tbs_cache");
+                if (Directory.Exists(cache) && !IsReparse(cache)) res.Add(cache);
+            }
+        }
+        return res;
+    }
 
     /// <summary>UNC, 장치 경로, 상위 폴더 이동, 대체 데이터 스트림 표기를 거른다.</summary>
     public static bool IsPlainLocalPath(string raw)

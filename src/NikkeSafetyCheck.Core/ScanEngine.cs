@@ -21,7 +21,7 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
             if (searchLimited)
                 ctx.Unknown("NSC-INSTALL", "니케 런처 설치 위치", "폴더 탐색 제한에 걸려 일부 드라이브는 끝까지 찾지 못했습니다. 다른 곳에 또 설치했다면 폴더를 직접 선택하세요.", false);
             if (installs.Count > 0)
-                ctx.Add("NSC-INSTALL", "니케 런처 설치 위치", $"{installs.Count}곳을 찾았습니다.", CheckStatus.NotApplicable, EvidenceType.Coverage, Confidence.High, source: "motherSphere");
+                ctx.Add("NSC-INSTALL", "니케 런처 설치 위치", $"니케 {installs.Count(i => i.IsNikke)}곳, 같은 구조의 다른 런처 {installs.Count(i => !i.IsNikke)}곳을 찾았습니다.", CheckStatus.NotApplicable, EvidenceType.Coverage, Confidence.High, source: "motherSphere");
         });
 
         Step("런처 로그를 확인하는 중");
@@ -92,16 +92,17 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
         if (installs.Count == 0)
         {
             if (c.Req.DeclaredNeverInstalled) c.Add(id, title, "니케 PC 버전을 설치한 적이 없다고 선택하셔서 해당 없음으로 처리했습니다.", CheckStatus.NotApplicable, EvidenceType.Coverage, Confidence.Low);
-            else c.Unknown(id, title, "설치 위치를 찾지 못해 로그를 확인하지 못했습니다. 게임을 지웠다면 로그도 함께 사라졌을 수 있습니다.", true, "설치 폴더를 직접 선택하거나, 설치한 적이 없으면 '설치한 적 없음'을 선택하세요.");
+            else c.Unknown(id, title, "니케나 같은 구조의 런처 설치 위치를 찾지 못해 로그를 확인하지 못했습니다. 게임을 지웠다면 로그도 함께 사라졌을 수 있습니다.", true, "설치 폴더를 직접 선택하거나, 해당 런처를 설치한 적이 없으면 '설치한 적 없음'을 선택하세요.");
             return;
         }
         var scanner = new LogScanner(ioc);
         foreach (var inst in installs)
         {
+            using var mark = c.BeginInstall(inst);
             var log = Path.Combine(inst.LauncherDir, "intl_service", "debug.log");
             if (!File.Exists(log))
             {
-                c.Unknown(id, title, "설치 폴더는 찾았지만 debug.log가 없습니다. 런처를 실행한 적이 없거나 로그가 지워졌을 수 있습니다.", true, "기록이 없으므로 이 항목으로는 판단할 수 없습니다.", log);
+                c.Unknown(id, title, "설치 폴더는 찾았지만 debug.log가 없습니다. 런처를 실행한 적이 없거나 로그가 지워졌을 수 있습니다.", inst.IsNikke, "기록이 없으므로 이 항목으로는 판단할 수 없습니다.", log);
                 continue;
             }
             LogScanResult r;
@@ -145,6 +146,7 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
         }
         foreach (var inst in installs)
         {
+            using var mark = c.BeginInstall(inst);
             var dir = Path.Combine(inst.LauncherDir, "log", "tinyget");
             if (!Directory.Exists(dir)) { c.Add(id, title, "tinyget 로그 폴더가 없어 이 항목은 확인할 수 없습니다.", CheckStatus.Unknown, EvidenceType.Coverage, Confidence.Low, path: dir); continue; }
             int requests = 0, successes = 0, unreadable = 0, luaFiles = 0;
@@ -179,13 +181,24 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
     private void ScanLocalStorage(Ctx c)
     {
         const string id = "NSC-LS-STATE"; const string title = "런처 Local Storage 상태 문자열";
-        var dir = Path.Combine(PathSafety.LauncherCacheDir(c.Req.Target), "Local Storage", "leveldb");
-        if (!Directory.Exists(dir))
-        {
-            c.Add(id, title, "런처 저장 폴더가 없어 확인할 수 없습니다. 런처를 쓴 적이 없거나 이미 지워졌을 수 있습니다.",
+        var nikke = PathSafety.NikkeCacheDirs(c.Req.Target).Where(Directory.Exists).ToList();
+        if (nikke.Count == 0 || nikke.All(d => !Directory.Exists(Path.Combine(d, "Local Storage", "leveldb"))))
+            c.Add(id, title, "니케 런처 저장 폴더가 없어 확인할 수 없습니다. 런처를 쓴 적이 없거나 이미 지워졌을 수 있습니다.",
                 c.Req.DeclaredNeverInstalled ? CheckStatus.NotApplicable : CheckStatus.Unknown, EvidenceType.Coverage, Confidence.Low);
-            return;
+        foreach (var d in nikke) ScanOneLocalStorage(c, d);
+        foreach (var d in PathSafety.DiscoverOtherCacheDirs(c.Req.Target))
+        {
+            var start = c.Findings.Count;
+            ScanOneLocalStorage(c, d);
+            c.MarkOther(start, d);
         }
+    }
+
+    private void ScanOneLocalStorage(Ctx c, string cacheRoot)
+    {
+        const string id = "NSC-LS-STATE"; const string title = "런처 Local Storage 상태 문자열";
+        var dir = Path.Combine(cacheRoot, "Local Storage", "leveldb");
+        if (!Directory.Exists(dir)) return;
         int strong = 0, weak = 0, unreadable = 0;
         foreach (var f in Directory.EnumerateFiles(dir, "*", new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint }))
         {
@@ -215,14 +228,23 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
     private void ScanLoaderCache(Ctx c)
     {
         const string id = "NSC-CACHE-LOADER"; const string title = "런처 캐시의 로더 주소";
-        var root = PathSafety.LauncherCacheDir(c.Req.Target);
-        var dirs = new[] { Path.Combine(root, "Code Cache", "js"), Path.Combine(root, "Cache", "Cache_Data") }.Where(Directory.Exists).ToList();
-        if (dirs.Count == 0)
+        var nikke = PathSafety.NikkeCacheDirs(c.Req.Target).Where(Directory.Exists).ToList();
+        if (nikke.Count == 0)
+            c.Add(id, title, "니케 런처 캐시 폴더가 없어 확인할 수 없습니다.", c.Req.DeclaredNeverInstalled ? CheckStatus.NotApplicable : CheckStatus.Unknown, EvidenceType.Coverage, Confidence.Low);
+        foreach (var d in nikke) ScanOneCache(c, d);
+        foreach (var d in PathSafety.DiscoverOtherCacheDirs(c.Req.Target))
         {
-            c.Add(id, title, "런처 캐시 폴더가 없어 확인할 수 없습니다.", c.Req.DeclaredNeverInstalled ? CheckStatus.NotApplicable : CheckStatus.Unknown, EvidenceType.Coverage, Confidence.Low);
-            return;
+            var start = c.Findings.Count;
+            ScanOneCache(c, d);
+            c.MarkOther(start, d);
         }
-        int hits = 0, skipped = 0, files = 0; long total = 0;
+    }
+
+    private void ScanOneCache(Ctx c, string root)
+    {
+        const string id = "NSC-CACHE-LOADER"; const string title = "런처 캐시의 로더 주소";
+        int hits = 0, netHits = 0, skipped = 0, files = 0; long total = 0;
+        var dirs = new[] { Path.Combine(root, "Code Cache", "js"), Path.Combine(root, "Cache", "Cache_Data") }.Where(Directory.Exists).ToList();
         foreach (var d in dirs)
         foreach (var f in Directory.EnumerateFiles(d, "*", new EnumerationOptions { IgnoreInaccessible = true, RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint }))
         {
@@ -237,13 +259,21 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { skipped++; }
         }
-        if (hits > 0)
-            c.Add(id, title, $"캐시 파일 {hits}개에서 악성 로더 주소를 찾았습니다. 런처가 변조 파일을 불러왔다는 흔적이며 에이전트 실행을 뜻하지는 않습니다. 런처를 다시 열기 전에 캐시 정리가 필요합니다.",
+        // 런처가 접속한 호스트를 남기는 파일. 쿠키와 저장 비밀번호 파일은 이름으로 걸러 열지 않는다.
+        foreach (var name in new[] { "Network Persistent State", "Reporting and NEL" })
+        foreach (var f in Directory.EnumerateFiles(root, name, new EnumerationOptions { IgnoreInaccessible = true, RecurseSubdirectories = true, MaxRecursionDepth = 3, AttributesToSkip = FileAttributes.ReparsePoint }))
+        {
+            c.Ct.ThrowIfCancellationRequested();
+            try { if (new FileInfo(f).Length <= c.Req.Limits.MaxBinaryFileBytes && BinaryScanner.Contains(f, ioc.LogExposureMarker, c.Ct)) netHits++; }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { skipped++; }
+        }
+        if (hits + netHits > 0)
+            c.Add(id, title, $"캐시 파일 {hits}개에서 악성 로더 주소를, 접속 기록 파일 {netHits}개에서 공격 도메인을 찾았습니다. 변조 파일을 불러오거나 접속한 흔적이며 에이전트 실행을 뜻하지는 않습니다. 런처를 다시 열기 전에 캐시 정리가 필요합니다.",
                 CheckStatus.Found, EvidenceType.LoaderCache, Confidence.Medium, Severity.Suspicious, Temporal.Past, RemediationEligibility.ManualOnly, path: root, source: "motherSphere", stage: EvidenceStage.ExposureOrAttempt);
         else if (skipped > 0)
             c.Add(id, title, $"파일 {skipped}개를 제한이나 잠금 때문에 확인하지 못했습니다.", CheckStatus.Unknown, EvidenceType.Coverage, Confidence.Low, path: root, required: true, retry: "런처를 닫고 다시 점검하세요.");
         else
-            c.Add(id, title, "일치하는 주소를 찾지 못했습니다.", CheckStatus.NotFound, EvidenceType.LoaderCache, Confidence.Medium, path: root, source: "motherSphere");
+            c.Add(id, title, dirs.Count == 0 ? "캐시 폴더가 비어 있어 일치 항목이 없습니다." : "일치하는 주소를 찾지 못했습니다.", CheckStatus.NotFound, EvidenceType.LoaderCache, Confidence.Medium, path: root, source: "motherSphere");
     }
 
     private sealed record ComObservation(string KeyPath, RegistryKeySnapshot Inproc, string Value, string Expanded);
@@ -292,6 +322,9 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
                     c.Ct.ThrowIfCancellationRequested();
                     var dll = Path.Combine(sub, PathSafety.DllName);
                     if (File.Exists(dll)) TryObserve(dll, PathSafety.Hex64().IsMatch(Path.GetFileName(sub)));
+                    else if (PathSafety.Hex64().IsMatch(Path.GetFileName(sub)))
+                        c.Add("NSC-DLL-SCAN", "의심 DLL", $"{root.Browser} 폴더에 악성 설치 구조와 같은 64자리 이름의 폴더가 있지만 DLL은 없습니다. 백신이나 다른 도구가 DLL만 지웠을 수 있습니다. 자동으로 지우지 않습니다.",
+                            CheckStatus.Found, EvidenceType.PersistenceDll, Confidence.Medium, Severity.Suspicious, Temporal.Past, RemediationEligibility.ManualOnly, path: sub, source: "motherSphere", required: true, stage: EvidenceStage.PersistenceInstalled);
                 }
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { denied = true; }
@@ -377,7 +410,7 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
                 c.Add("NSC-DLL-SCAN", "의심 DLL", $"{browser} 폴더에서 같은 이름의 DLL을 찾았습니다. {why} {sigText}. 추가 확인이 필요합니다.", CheckStatus.Found, EvidenceType.PersistenceDll, Confidence.Medium, Severity.Suspicious, Temporal.Current, RemediationEligibility.ManualOnly, path: d.Path, sha: d.Sha256, fileId: d.FileId, required: true, source: "whykusanagi");
             }
         }
-        if (dlls.Count == 0 && !alreadyUnknownDll)
+        if (dlls.Count == 0 && !alreadyUnknownDll && !c.Findings.Any(f => f.RuleId == "NSC-DLL-SCAN"))
             c.Add("NSC-DLL-SCAN", "의심 DLL", "확인한 브라우저 폴더에서 해당 DLL을 찾지 못했습니다. PlatformExperienceHelper 폴더와 Chrome의 정상 EXE, LoadFeatures 파일은 정상일 수 있어 판정에 쓰지 않습니다.", CheckStatus.NotFound, EvidenceType.PersistenceDll, Confidence.High, required: true, source: "motherSphere");
     }
 
@@ -501,6 +534,20 @@ public sealed class ScanEngine(IocData ioc, PlatformServices svc, string toolVer
                 RemediationEligibility = elig, Severity = sev, Temporal = temporal, Required = required, Path = path, Sha256 = sha,
                 RegistryKey = regKey, RegistryValue = regValue, FileId = fileId, RetryHint = retry, Stage = stage,
             });
+        }
+
+        /// <summary>니케가 아닌 폴더에서 나온 결과임을 표시한다. 등급은 지표로 정해지고 게임 이름으로 바뀌지 않는다.</summary>
+        public void MarkOther(int start, string folder)
+        {
+            for (var i = start; i < Findings.Count; i++)
+                Findings[i] = Findings[i] with { OtherLauncher = true, Detail = $"[니케 외 런처 폴더] {Findings[i].Detail}" };
+        }
+
+        public IDisposable BeginInstall(LauncherInstall inst) => new InstallScope(this, inst, Findings.Count);
+
+        private sealed class InstallScope(Ctx c, LauncherInstall inst, int start) : IDisposable
+        {
+            public void Dispose() { if (!inst.IsNikke) c.MarkOther(start, inst.LauncherDir); }
         }
 
         public void Unknown(string id, string title, string detail, bool required, string? retry = null, string? path = null) =>

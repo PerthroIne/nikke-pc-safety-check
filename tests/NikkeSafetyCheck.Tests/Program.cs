@@ -678,6 +678,76 @@ T("34 조치 후 수동 확인 안내: 사라지는 항목을 실행 전에 알�
     True(Guidance.ManualCheckIntro.Contains("안전하다는 뜻은 아닙니다"), "안전 오해 문구");
     True(File.Exists(log));
 });
+T("35 이름에 니케가 없어도 같은 구조의 런처 폴더는 같은 기준으로 검사, 조치 대상은 아님", () =>
+{
+    using var e = NewEnv();
+    var other = Path.Combine(e.Root, "Games", "SomeOtherGame", "Launcher");
+    Directory.CreateDirectory(Path.Combine(other, "intl_service"));
+    File.WriteAllText(Path.Combine(other, "intl_service", "debug.log"), ExecLine + "\n");
+    var exe = Path.Combine(other, "nikke_launcher_fake.exe"); File.WriteAllText(exe, "x");
+    e.Hints.Hints.Add(new InstallHint(other, "설치 정보"));
+    var r = Scan(e);
+    Eq(1, r.Installs.Count); True(!r.Installs[0].IsNikke, "니케로 분류");
+    var f = Of(r, "NSC-LOG-EXEC").Single();
+    Eq(Severity.High, f.Severity); True(f.OtherLauncher); True(f.Detail.StartsWith("[니케 외 런처 폴더]"));
+    True(Verdict.CauseNote(r.Findings)!.Contains("단정할 수는 없지만"));
+    var plan = PlanBuilder.Build(r, null);
+    True(!plan.Items.Any(i => i.Kind is PlanKind.ClearLauncherCache or PlanKind.BlockLauncherOutbound), "다른 런처 조치");
+    True(plan.ManualNotes.Any(n => n.Contains("니케 외 런처")));
+});
+T("36 드라이브 탐색: 깊은 위치의 같은 구조 폴더를 찾고 구조가 없으면 무시", () =>
+{
+    using var e = NewEnv();
+    var deep = Path.Combine(e.Root, "drive", "Games", "Level Infinite", "Other", "Launcher");
+    Directory.CreateDirectory(Path.Combine(deep, "intl_service"));
+    Directory.CreateDirectory(Path.Combine(e.Root, "drive", "Games", "NoStructureGame", "Launcher"));
+    e.Hints.Roots.Add(Path.Combine(e.Root, "drive"));
+    var list = InstallLocator.Locate(e.Hints, [], new ScanLimits(), default, out var limited);
+    True(!limited, "제한");
+    Eq(1, list.Count); Eq(deep, list[0].LauncherDir);
+});
+T("37 다른 런처 저장소는 검사만, HMT 저장소는 니케로 검사·정리", () =>
+{
+    using var e = NewEnv();
+    e.Install(); e.DebugLog("x\n");
+    string Ls(string baseDir) { var d = Path.Combine(baseDir, "tbs_cache", "Local Storage", "leveldb"); Directory.CreateDirectory(d); return d; }
+    File.WriteAllText(Path.Combine(Ls(Path.Combine(e.Target.RoamingAppData, "other_launcher")), "1.log"), "k2f.agent.state");
+    var r = Scan(e);
+    var o = Of(r, "NSC-LS-STATE").Single(x => x.OtherLauncher);
+    Eq(Severity.High, o.Severity);
+    True(!PlanBuilder.Build(r, null).Items.Any(i => i.ExpectedPath?.Contains("other_launcher") == true), "다른 런처 캐시가 정리 대상");
+    File.WriteAllText(Path.Combine(Ls(Path.Combine(e.Target.RoamingAppData, "nikke_launcher_hmt")), "1.log"), "k2f.agent.state");
+    var r2 = Scan(e);
+    True(Of(r2, "NSC-LS-STATE").Any(x => !x.OtherLauncher && x.Severity == Severity.High && x.Path!.Contains("hmt")), "HMT 미탐지");
+    var plan = PlanBuilder.Build(r2, null);
+    True(plan.Items.Single(i => i.Kind == PlanKind.ClearLauncherCache).Title.Contains("HMT"));
+});
+TA("38 다른 런처 캐시 경로를 계획에 위조해도 조치 거부", async () =>
+{
+    using var e = NewEnv();
+    e.Install(); e.DebugLog("x\n");
+    var fake = Path.Combine(e.Target.RoamingAppData, "other_launcher", "tbs_cache"); Directory.CreateDirectory(fake);
+    var r = Scan(e);
+    var item = new PlanItem { Id = "x", Kind = PlanKind.ClearLauncherCache, Title = "t", WhatChanges = "w", ExpectedPath = fake };
+    var res = await e.Exec().ExecuteAsync(new RemediationPlan("p0000000", "s", Sid, DateTimeOffset.Now, [item], []), new HashSet<string> { "x" }, r, false, null, default);
+    Eq(ItemOutcome.Aborted, res.Single().Outcome);
+    True(Directory.Exists(fake));
+});
+T("39 설치 경로 힌트: .reg 내용에서 경로만 추출, 공격 도메인 로그와 접속 기록은 의심, 빈 해시 폴더도 알림", () =>
+{
+    var paths = InstallLocator.PathsInRegText("[HKEY_CURRENT_USER\\Software\\Classes\\nikkelauncher\\Shell\\Open\\Command]\r\n@=\"\\\"D:\\\\Games\\\\Level Infinite\\\\NIKKE\\\\Launcher\\\\nikke_launcher.exe\\\" \\\"%1\\\"\"").ToList();
+    Eq(1, paths.Count); Eq(@"D:\Games\Level Infinite\NIKKE\Launcher\nikke_launcher.exe", paths[0]);
+    using var e = NewEnv();
+    e.Install(); e.DebugLog("[1101/1:INFO:CONSOLE(1)] \"load https://insightjs.com/l.js failed\", source: https://x (1)\n");
+    Eq(Severity.Suspicious, Of(Scan(e), "NSC-LOG-EXEC").Single().Severity);
+    e.DebugLog("x\n");
+    var cache = PathSafety.LauncherCacheDir(e.Target); Directory.CreateDirectory(Path.Combine(cache, "Network"));
+    File.WriteAllText(Path.Combine(cache, "Network", "Network Persistent State"), "{\"server\":\"https://insightjs.com\"}");
+    Eq(Severity.Suspicious, Of(Scan(e), "NSC-CACHE-LOADER").Single().Severity);
+    Directory.CreateDirectory(Path.Combine(e.ChromeHelper(), new string('c', 64)));
+    var dl = Of(Scan(e), "NSC-DLL-SCAN").Single();
+    Eq(Severity.Suspicious, dl.Severity); Eq(RemediationEligibility.ManualOnly, dl.RemediationEligibility);
+});
 T("15 IOC 데이터 무결성과 출처", () =>
 {
     True(ioc.BlockDomains.Contains("analytics.insightjs.com"));
@@ -808,8 +878,9 @@ sealed class FakeNet : INetworkInspector
 sealed class FakeHints : IInstallHintSource
 {
     public readonly List<InstallHint> Hints = [];
+    public readonly List<string> Roots = [];
     public IEnumerable<InstallHint> GetHints(CancellationToken ct) => Hints;
-    public IEnumerable<string> GetFixedDriveRoots() => [];
+    public IEnumerable<string> GetFixedDriveRoots() => Roots;
 }
 sealed class FakePriv : IPrivilegedRunner
 {
